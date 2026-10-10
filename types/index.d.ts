@@ -6,17 +6,22 @@ export type AgentRow = {
   startedAt: number
   status: 'running' | 'done' | 'failed'
 }
-export type LogEntry = { at: number; text: string }
+export type Run = { scope: string; startedAt: number; total?: number }
+export type StepEntry = { text: string; at: number }
+export type Work = { tools: number; files: string[]; commits: number }
+export type IssueResult = { id: string; isDone: boolean; minutes: number; note: string }
 
 declare module 'claude-code' {
   interface PluginState {
     devkit: {
       isRunning: boolean
       issue: Issue | null
-      step: string
       agents: AgentRow[]
-      log: LogEntry[]
       now: number
+      run: Run | null
+      steps: StepEntry[]
+      work: Work
+      results: IssueResult[]
     }
   }
 }

@@ -12,24 +12,45 @@ const SPAWN = {
   fork: false,
 } as AgentSpawnInput // the fields the hook reads; the rest is the engine's
 
-test('band shows issue, size and time against limit', async ($, on) => {
+test('band shows issue, phases, time bar and work', async ($, on) => {
   const clock = mock.clock(on, { now: 0 })
-  on('ui.open', () => ({ value: { isPlaced: false as const, reason: 'test' } }))
-  await $.tool.call(status({ action: 'run_start' }))
+  await $.tool.call(status({ action: 'run_start', text: 'm2.5', total: 4 }))
   await $.tool.call(status({ action: 'issue_start', issue: 'GAME-42', title: 'Jump', size: 'M' }))
-  await clock.advance(12 * 60_000)
+  await $.tool.call(status({ action: 'step', text: 'plan' }))
+  await clock.advance(3 * 60_000)
+  await $.tool.call(status({ action: 'step', text: 'code player controller' }))
+  await clock.advance(21 * 60_000)
   await $.tool.call(status({ action: 'step', text: 'verify' }))
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'devkit', surface, component: 'AbovePrompt', props: { hasSurvey: false } as RenderPropsOf['AbovePrompt'] })
-    expect((await ui.find({ type: 'Text' }))?.text).toMatch(/GAME-42 · M · 12\/30m · verify · 0 agents/)
+    const ui = await $.ui.mount({ plugin: 'devkit', surface, component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100 } as RenderPropsOf['AbovePrompt'] })
+    const text = (await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')
+    expect(text).toMatch(/AUTOPILOT/)
+    expect(text).toMatch(/m2\.5/)
+    expect(text).toMatch(/GAME-42/)
+    expect(text).toMatch(/● plan 3m/)
+    expect(text).toMatch(/● code 21m/)
+    expect(text).toMatch(/◉ verify/)
+    expect(text).toMatch(/24m\/30m 80%/)
+    expect(text).toMatch(/0\/4 issues/)
     await ui.unmount()
   }
 })
 
+test('done issue lands in counters and last result', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  await $.tool.call(status({ action: 'run_start', text: 'm2.5' }))
+  await $.tool.call(status({ action: 'issue_start', issue: 'GAME-1', title: 'A', size: 'S' }))
+  await $.tool.call(status({ action: 'issue_done', text: 'ok' }))
+  const ui = await $.ui.mount({ plugin: 'devkit', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100 } as RenderPropsOf['AbovePrompt'] })
+  const text = (await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')
+  expect(text).toMatch(/picking next issue/)
+  expect(text).toMatch(/✓ 1/)
+  expect(text).toMatch(/last ✓ GAME-1/)
+})
+
 test('fourth concurrent subagent is denied, except during decide', async ($, on) => {
   mock.clock(on, { now: 0 })
-  on('ui.open', () => ({ value: { isPlaced: false as const, reason: 'test' } }))
   let n = 0
   on('agent.spawn', () => ({ model: 'm', agentId: `a${++n}` }))
   await $.tool.call(status({ action: 'run_start' }))
