@@ -12,7 +12,7 @@ Claude Code plugin for game dev workflows.
 ## Install
 
 ```
-/plugin marketplace add <path-or-repo>
+/plugin marketplace add 2EU5/devkit
 /plugin install devkit@devkit
 ```
 

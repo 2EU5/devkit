@@ -2,6 +2,8 @@
   "name": "devkit",
   "version": "0.7.0",
   "license": "CC-BY-NC-ND-4.0",
+  "repository": "https://github.com/2EU5/devkit",
+  "homepage": "https://github.com/2EU5/devkit",
   "description": "Game dev workflows: GDD interviews, audits, decision councils, and an autonomous Unity C# / Linear / Git loop.",
   "author": {
     "name": "Zeus"
