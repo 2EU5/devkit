@@ -1,6 +1,6 @@
 {
   "name": "devkit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Autonomous Unity C# game dev workflows: Unity Editor, Linear, Git.",
   "author": {
     "name": "Zeus"
