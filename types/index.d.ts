@@ -6,7 +6,7 @@ export type AgentRow = {
   startedAt: number
   status: 'running' | 'done' | 'failed'
 }
-export type Run = { project: string; scope: string; startedAt: number; total?: number; tokens: number }
+export type Run = { project: string; scope: string; startedAt: number; lastAt: number; total?: number; tokens: number }
 export type StepEntry = { text: string; at: number }
 export type Work = { tools: number; files: string[]; commits: number }
 export type IssueResult = { id: string; isDone: boolean; minutes: number; note: string }

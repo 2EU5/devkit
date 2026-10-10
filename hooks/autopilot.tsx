@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRow, IssueResult, Run, Size, StepEntry, Work } from '../types'
 
@@ -10,6 +10,9 @@ const TOOL = 'mcp__devkit__status'
 const MAX_AGENTS = 3
 const PHASES = ['plan', 'code', 'verify', 'commit'] as const
 const NO_WORK: Work = { tools: 0, files: [], commits: 0 }
+// No status call for longer than the XL limit plus slack: the run died without run_end.
+const STALE_MS = 4.5 * 60 * 60_000
+const COMMIT = /\bgit\b(?:\s+-[Cc]\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+commit\b/
 
 const isRunning = atom({ plugin: 'devkit', key: 'isRunning' } as const, false)
 const issue = atom({ plugin: 'devkit', key: 'issue' } as const, null)
@@ -31,7 +34,8 @@ type StatusInput = {
 }
 
 // decide and audit may run their own subagents beyond the cap (skill rule 12).
-export const isCapExempt = (s: string) => /^(decide|audit)\b/i.test(s)
+export const isCapExempt = (s: string) => /^(decide|audit)/i.test(s)
+export const isCommit = (command: string) => COMMIT.test(command)
 
 const minutes = (from: number, to: number) => Math.max(0, Math.floor((to - from) / 60_000))
 export const fmtTokens = (n: number) =>
@@ -46,16 +50,29 @@ export const bar = (ratio: number, width: number) => {
   return { filled: '█'.repeat(full) + tip, empty: '░'.repeat(width - full - (tip ? 1 : 0)) }
 }
 
-// Phase each step text opens (plan/code/verify/commit), with minutes spent in it.
+// Phase tracker: a step starting with a phase word enters that phase (going back too);
+// every step's time counts toward the phase it is in.
 export const phases = (list: StepEntry[], at: number) => {
-  const starts = PHASES.map(name => list.find(one => one.text.toLowerCase().startsWith(name))?.at)
-  const current = starts.reduce<number>((last, s, i) => (s === undefined ? last : i), -1)
-  return PHASES.map((name, i) => {
-    const start = starts[i]
-    const end = starts.slice(i + 1).find(s => s !== undefined) ?? at
-    const state = i < current ? 'done' : i === current ? 'now' : 'todo'
-    return { name, state, mins: start === undefined ? undefined : minutes(start, end) } as const
+  const spent: (number | undefined)[] = PHASES.map(() => undefined)
+  let current = -1
+  list.forEach((one, i) => {
+    const hit = PHASES.findIndex(name => one.text.toLowerCase().startsWith(name))
+    current = hit >= 0 ? hit : current
+    if (current >= 0) spent[current] = (spent[current] ?? 0) + (list[i + 1]?.at ?? at) - one.at
   })
+  return PHASES.map((name, i) => {
+    const state = i < current ? 'done' : i === current ? 'now' : 'todo'
+    const ms = spent[i]
+    return { name, state, mins: ms === undefined ? undefined : Math.floor(ms / 60_000) } as const
+  })
+}
+
+const endRun = async ($: EngineInterface, why: string) => {
+  const list = await read($, results)
+  const done = list.filter(one => one.isDone).length
+  await update($, isRunning, () => false)
+  await update($, issue, () => null)
+  $.ui.toast(`Autopilot ${why}: ${done} done, ${list.length - done} need input`)
 }
 
 export const register: Register = on => {
@@ -82,8 +99,14 @@ export const register: Register = on => {
       },
       isDeferred: false,
     })
-    // Redraws elapsed time while nothing else changes.
-    $.clock.every(30_000, () => void $.clock.now().then(t => update($, now, () => t)))
+    // Redraws elapsed time during a run, and ends a run that went stale.
+    $.clock.every(30_000, async () => {
+      if (!(await read($, isRunning))) return
+      const t = await $.clock.now()
+      const r = await read($, run)
+      if (r && t - r.lastAt > STALE_MS) return endRun($, 'stopped (no progress)')
+      await update($, now, () => t)
+    })
 
     return next(e)
   })
@@ -94,15 +117,19 @@ export const register: Register = on => {
     await update($, now, () => at)
     const current = await read($, issue)
     const id = input.issue ?? current?.id ?? '?'
+    // Any action may carry an updated total (sub-issues added mid-run).
+    if (input.action !== 'run_start') {
+      await update($, run, r => (r ? { ...r, lastAt: at, total: input.total ?? r.total } : r))
+    }
 
     switch (input.action) {
       case 'run_start': {
         const cwd = input.project ? '' : await $.session.cwd().catch(() => '')
         const project = input.project || (cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? '')
         await update($, isRunning, () => true)
-        await update($, run, () => ({ project, scope: input.text ?? '', startedAt: at, total: input.total, tokens: 0 }) satisfies Run)
+        await update($, run, () => ({ project, scope: input.text ?? '', startedAt: at, lastAt: at, total: input.total, tokens: 0 }) satisfies Run)
         await update($, issue, () => null)
-        await update($, agents, () => [])
+        await update($, agents, list => list.filter(one => one.status === 'running'))
         await update($, steps, () => [])
         await update($, work, () => NO_WORK)
         await update($, results, () => [])
@@ -114,7 +141,7 @@ export const register: Register = on => {
         await update($, work, () => NO_WORK)
         break
       case 'step':
-        await update($, steps, list => [...list, { text: input.text ?? '', at }].slice(-30))
+        await update($, steps, list => [...list, { text: input.text ?? '', at }].slice(-200))
         break
       case 'issue_done':
       case 'issue_abort': {
@@ -126,14 +153,9 @@ export const register: Register = on => {
         await update($, steps, () => [])
         break
       }
-      case 'run_end': {
-        const list = await read($, results)
-        const done = list.filter(one => one.isDone).length
-        await update($, isRunning, () => false)
-        await update($, issue, () => null)
-        $.ui.toast(`Autopilot finished: ${done} done, ${list.length - done} need input`)
+      case 'run_end':
+        await endRun($, 'finished')
         break
-      }
     }
 
     return { result: 'ok', text: 'ok' }
@@ -142,7 +164,7 @@ export const register: Register = on => {
   // Work stats for the current issue: tool calls, files touched, commits.
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    if (e.tool !== TOOL && (await read($, issue))) {
+    if (e.tool !== TOOL && !ran.deny && (await read($, issue))) {
       await update($, work, w => ({ ...w, tools: w.tools + 1 }))
     }
     return ran
@@ -158,18 +180,19 @@ export const register: Register = on => {
   }
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
-    if (!ran.deny && !ran.isError && /\bgit\s+commit\b/.test(e.command) && (await read($, issue))) {
+    if (!ran.deny && !ran.isError && isCommit(e.command) && (await read($, issue))) {
       await update($, work, w => ({ ...w, commits: w.commits + 1 }))
     }
     return ran
   })
 
-  // Token totals for the run and the current issue: every model request, main loop and subagents.
+  // Run token total: every model request, main loop and subagents. Cache reads are left out:
+  // each step re-reads the whole context, which would swamp the figure.
   on('turn.step', async function* ($, e, next) {
     const response = yield* next(e)
     const u = response.usage
     if (u && (await read($, isRunning))) {
-      const n = u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
+      const n = u.input_tokens + u.output_tokens + u.cache_creation_input_tokens
       await update($, run, r => (r ? { ...r, tokens: r.tokens + n } : r))
     }
     return response
@@ -188,7 +211,11 @@ export const register: Register = on => {
     const spawned = await next(e)
     if (!('deny' in spawned && spawned.deny) && 'agentId' in spawned && spawned.agentId) {
       const row: AgentRow = { id: spawned.agentId, description: e.description, startedAt: await $.clock.now(), status: 'running' }
-      await update($, agents, list => [...list, row].slice(-20))
+      // Keep every running row (the cap counts them) and the last few finished ones.
+      await update($, agents, list => {
+        const all = [...list, row]
+        return [...all.filter(one => one.status !== 'running').slice(-5), ...all.filter(one => one.status === 'running')]
+      })
     }
 
     return spawned
@@ -198,6 +225,9 @@ export const register: Register = on => {
     if (e.agentId) {
       const status: AgentRow['status'] = e.reason === 'answer' ? 'done' : 'failed'
       await update($, agents, list => list.map(one => (one.id === e.agentId ? { ...one, status } : one)))
+    } else if (e.reason === 'aborted' && (await read($, isRunning))) {
+      // The person stopped the main loop: the run will not reach run_end.
+      await endRun($, 'stopped')
     }
 
     return next(e)
@@ -215,32 +245,43 @@ export const register: Register = on => {
     const w = await read($, work)
     const done = await read($, results)
     const live = (await read($, agents)).filter(one => one.status === 'running')
-    const width = Math.max(10, Math.min(30, e.props.bodyColumns - 40))
     const okCount = done.filter(one => one.isDone).length
+    const project = runNow.project.length > 24 ? `${runNow.project.slice(0, 23)}…` : runNow.project
+    const tail = runNow.total ? ` ${done.length}/${runNow.total} issues` : ''
+    const tok = `${fmtTokens(runNow.tokens)} tok`
+    const runTime = `run ${fmt(minutes(runNow.startedAt, at))}`
+    const leftLen = '◆ AUTOPILOT'.length + (project ? 3 + project.length : 0) + 3 + tail.length
+    const rightLen = `✓ ${okCount} ✗ ${done.length - okCount} · ${tok} · ${runTime}`.length
+    // Border and padding take 4 cells; keep a 2-cell gap; drop the bar when under 6 cells.
+    const fit = Math.min(30, e.props.bodyColumns - 4 - 2 - leftLen - rightLen)
+    const width = fit >= 6 ? fit : 0
     const last = done.at(-1)
     const sep = <Text color="subtle"> · </Text>
     const label = (t: string) => <Text color="subtle">{t.padEnd(10)}</Text>
     const cells = (ratio: number, color: string, tail: string) => {
       const b = bar(ratio, width)
-      return [<Text color={color}>{b.filled}</Text>, <Text color="subtle">{b.empty}</Text>, <Text> {tail}</Text>]
+      return [
+        ...(width ? [<Text color={color}>{b.filled}</Text>, <Text color="subtle">{b.empty}</Text>] : []),
+        <Text>{tail}</Text>,
+      ]
     }
 
     const header = (
       <Box justifyContent="space-between">
         <Box>
           <Text color="claude" bold>◆ AUTOPILOT</Text>
-          {runNow.project ? <Text bold>{'   '}{runNow.project}</Text> : null}
+          {project ? <Text bold>{'   '}{project}</Text> : null}
           <Text>{'   '}</Text>
-          {runNow.total ? cells(done.length / runNow.total, 'claude', `${done.length}/${runNow.total} issues`) : null}
+          {runNow.total ? cells(done.length / runNow.total, 'claude', tail) : null}
         </Box>
         <Box>
           <Text color="success">✓ {okCount}</Text>
           <Text> </Text>
           <Text color={done.length > okCount ? 'warning' : 'subtle'}>✗ {done.length - okCount}</Text>
           {sep}
-          <Text color="subtle">{fmtTokens(runNow.tokens)} tok</Text>
+          <Text color="subtle">{tok}</Text>
           {sep}
-          <Text color="subtle">run {fmt(minutes(runNow.startedAt, at))}</Text>
+          <Text color="subtle">{runTime}</Text>
         </Box>
       </Box>
     )
@@ -254,14 +295,14 @@ export const register: Register = on => {
 
     const footer = (
       <Box>
-        <Text color={live.length >= MAX_AGENTS ? 'warning' : 'subtle'}>⚙ {live.length}/{MAX_AGENTS} agents</Text>
+        <Text color={live.length >= MAX_AGENTS ? 'warning' : 'subtle'} wrap="truncate-end">⚙ {live.length}/{MAX_AGENTS} agents</Text>
         {live.slice(0, 2).map(one => (
           <Text key={one.id} color="subtle" wrap="truncate-end">
             {'  '}▸ {one.description} {fmt(minutes(one.startedAt, at))}
           </Text>
         ))}
         {current ? (
-          <Text color="subtle">
+          <Text color="subtle" wrap="truncate-end">
             {'  │  '}{w.tools} tools · {w.files.length} files · {w.commits} commits
           </Text>
         ) : null}
