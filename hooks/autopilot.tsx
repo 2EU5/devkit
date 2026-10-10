@@ -4,11 +4,14 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { AgentRow, IssueResult, Run, Size, StepEntry, Work } from '../types'
 
 // Live view of an /autopilot run: a bordered band above the prompt, toasts, and the
-// skill's rule 12 cap (max 3 concurrent subagents) enforced at spawn.
+// skill's rule 12 cap (max 5 concurrent subagents) enforced at spawn.
 
 const TOOL = 'mcp__devkit__status'
-const MAX_AGENTS = 3
-const PHASES = ['plan', 'code', 'verify', 'commit'] as const
+const MAX_AGENTS = 5
+// The work phase is named per issue (its kind: code, ui, model, art, …). A step starting with
+// the kind or any of these words enters it; without a kind it takes the first such word seen.
+const WORK_WORDS = ['build', 'code', 'ui', 'model', 'art']
+const DEFAULT_KIND = 'build'
 const NO_WORK: Work = { tools: 0, files: [], commits: 0 }
 // No status call for longer than the XL limit plus slack: the run died without run_end.
 const STALE_MS = 4.5 * 60 * 60_000
@@ -28,6 +31,7 @@ type StatusInput = {
   issue?: string
   title?: string
   size?: Size
+  kind?: string
   text?: string
   total?: number
   project?: string
@@ -37,10 +41,27 @@ type StatusInput = {
 export const isCapExempt = (s: string) => /^(decide|audit)/i.test(s)
 export const isCommit = (command: string) => COMMIT.test(command)
 
-const minutes = (from: number, to: number) => Math.max(0, Math.floor((to - from) / 60_000))
 export const fmtTokens = (n: number) =>
   n < 1000 ? `${n}` : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1)}M`
-export const fmt = (m: number) => (m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`)
+
+// Elapsed time, one format for every timer on the band: 48s, 4m 12s, 1h 04m.
+export const dur = (ms: number) => {
+  const s = Math.floor(Math.max(0, ms) / 1000) || 0
+  const m = Math.floor(s / 60)
+  if (m < 1) return `${s}s`
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+}
+
+// The issue's kind as one short lowercase word ("UI" -> "ui"), or undefined.
+export const toKind = (s?: string) =>
+  s?.trim().toLowerCase().split(/\s+/)[0]?.replace(/[^a-z0-9-]/g, '').slice(0, 10) || undefined
+
+// "M2.5 · Organic world" -> ['M2.5', 'Organic world'], so a short id can be drawn dim.
+export const splitScope = (scope: string): readonly [string, string] => {
+  const hit = /^(\S+?)(?:\s+[·—–-]|:)\s+(.+)$/.exec(scope)
+  return hit?.[1] && hit[2] && hit[1].length <= 12 ? [hit[1], hit[2]] : ['', scope]
+}
 
 // Smooth bar with eighth-block tips: ratio 0..1 (clamped) over `width` cells.
 export const bar = (ratio: number, width: number) => {
@@ -50,22 +71,33 @@ export const bar = (ratio: number, width: number) => {
   return { filled: '█'.repeat(full) + tip, empty: '░'.repeat(width - full - (tip ? 1 : 0)) }
 }
 
-// Phase tracker: a step starting with a phase word enters that phase (going back too);
-// every step's time counts toward the phase it is in.
-export const phases = (list: StepEntry[], at: number) => {
-  const spent: (number | undefined)[] = PHASES.map(() => undefined)
+// Phase tracker: plan, the issue's kind, verify, commit. A step starting with a phase word
+// enters that phase (going back too); other steps (decide, audit, …) stay where they are.
+// A phase left behind by going back is `seen`.
+export const phases = (list: StepEntry[], kind?: string) => {
+  const texts = list.map(one => one.text.trim().toLowerCase())
+  const firstWork = texts.map(text => WORK_WORDS.find(word => text.startsWith(word))).find(Boolean)
+  const label = kind || firstWork || DEFAULT_KIND
+  const work = [label, ...WORK_WORDS]
+  const seen = new Set<number>()
   let current = -1
-  list.forEach((one, i) => {
-    const hit = PHASES.findIndex(name => one.text.toLowerCase().startsWith(name))
-    current = hit >= 0 ? hit : current
-    if (current >= 0) spent[current] = (spent[current] ?? 0) + (list[i + 1]?.at ?? at) - one.at
-  })
-  return PHASES.map((name, i) => {
-    const state = i < current ? 'done' : i === current ? 'now' : 'todo'
-    const ms = spent[i]
-    return { name, state, mins: ms === undefined ? undefined : Math.floor(ms / 60_000) } as const
+  for (const text of texts) {
+    // plan, verify and commit win over the work words, whatever the kind is.
+    const named = ['plan', '', 'verify', 'commit'].findIndex(word => word && text.startsWith(word))
+    const hit = named >= 0 ? named : work.some(word => text.startsWith(word)) ? 1 : -1
+    if (hit >= 0) {
+      current = hit
+      seen.add(hit)
+    }
+  }
+  return ['plan', label, 'verify', 'commit'].map((name, i) => {
+    const state = i < current ? 'done' : i === current ? 'now' : seen.has(i) ? 'seen' : 'todo'
+    return { name, state } as const
   })
 }
+
+const GLYPH = { done: '✓', now: '●', seen: '◌', todo: '○' } as const
+const TONE = { done: 'success', now: 'claude', seen: 'subtle', todo: 'subtle' } as const
 
 const endRun = async ($: EngineInterface, why: string) => {
   const list = await read($, results)
@@ -91,7 +123,12 @@ export const register: Register = on => {
           issue: { type: 'string', description: 'Linear issue ID, e.g. GAME-42' },
           title: { type: 'string' },
           size: { type: 'string', enum: ['S', 'M', 'L', 'XL'] },
-          text: { type: 'string', description: 'run_start: scope (milestone). step: step name. done/abort: one-line reason' },
+          kind: { type: 'string', description: 'issue_start: one word naming the work phase: code, ui, model, art, or another' },
+          text: {
+            type: 'string',
+            description:
+              'run_start: scope (milestone, e.g. "M2.5 · Organic world"). step: short text starting with the phase word (plan, the issue kind, verify, commit). done/abort: one-line reason',
+          },
           total: { type: 'number', description: 'run_start: issues in scope' },
           project: { type: 'string', description: 'run_start: Linear project name' },
         },
@@ -99,8 +136,8 @@ export const register: Register = on => {
       },
       isDeferred: false,
     })
-    // Redraws elapsed time during a run, and ends a run that went stale.
-    $.clock.every(30_000, async () => {
+    // Ticks the band's timers each second during a run, and ends a run that went stale.
+    $.clock.every(1000, async () => {
       if (!(await read($, isRunning))) return
       const t = await $.clock.now()
       const r = await read($, run)
@@ -136,7 +173,7 @@ export const register: Register = on => {
         break
       }
       case 'issue_start':
-        await update($, issue, () => ({ id, title: input.title ?? '', size: input.size, startedAt: at }))
+        await update($, issue, () => ({ id, title: input.title ?? '', size: input.size, kind: toKind(input.kind), startedAt: at }))
         await update($, steps, () => [])
         await update($, work, () => NO_WORK)
         break
@@ -146,7 +183,7 @@ export const register: Register = on => {
       case 'issue_done':
       case 'issue_abort': {
         const isDone = input.action === 'issue_done'
-        const row: IssueResult = { id, isDone, minutes: current ? minutes(current.startedAt, at) : 0, note: input.text ?? '' }
+        const row: IssueResult = { id, isDone, ms: current ? Math.max(0, at - current.startedAt) : 0, note: input.text ?? '' }
         await update($, results, list => [...list, row].slice(-50))
         $.ui.toast(`${isDone ? '✓' : '✗ Needs Input'} ${id}${row.note ? `: ${row.note}` : ''}`)
         await update($, issue, () => null)
@@ -233,6 +270,16 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // The band on an 80-column terminal:
+  // ╭─────────────────────────────────────────────────────────────────────────╮
+  // │ ◆ AUTOPILOT · Project Cell                                   run 4m 18s │
+  // │ M2.5 Organic world                           ███▉░░░░░░░░░░ 3/11  ✓3 ✗0 │
+  // │ ─────────────────────────────────────────────────────────────────────── │
+  // │ ▶ TEC-91 [M] Cell inspector panel with live gene readout                │
+  // │   ✓ plan ── ● ui ── ○ verify ── ○ commit   » ui wire gen…  issue 1m 48s │
+  // │ ─────────────────────────────────────────────────────────────────────── │
+  // │ agents 2/5 · tools 9 · files 3 · commits 1 · last ✓ TEC-90 50s  22k tok │
+  // ╰─────────────────────────────────────────────────────────────────────────╯
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const runNow = await read($, run)
     if (e.props.hasSurvey || !runNow || !(await read($, isRunning))) {
@@ -246,117 +293,117 @@ export const register: Register = on => {
     const done = await read($, results)
     const live = (await read($, agents)).filter(one => one.status === 'running')
     const okCount = done.filter(one => one.isDone).length
-    const project = runNow.project.length > 24 ? `${runNow.project.slice(0, 23)}…` : runNow.project
-    const tail = runNow.total ? ` ${done.length}/${runNow.total} issues` : ''
-    const tok = `${fmtTokens(runNow.tokens)} tok`
-    const runTime = `run ${fmt(minutes(runNow.startedAt, at))}`
-    const leftLen = '◆ AUTOPILOT'.length + (project ? 3 + project.length : 0) + (tail ? 3 + tail.length : 0)
-    // Sized against a worst-case right side so the bar does not jitter as digits change.
-    const rightLen = '✓ 99 ✗ 99 · 999k tok · run 9h59'.length
-    // Border and padding take 4 cells, then a 2-cell gap and 1 cell of slack for wide glyphs.
-    const fit = Math.min(30, e.props.bodyColumns - 4 - 3 - leftLen - rightLen)
-    const width = fit >= 6 ? fit : 0
+    const badCount = done.length - okCount
     const last = done.at(-1)
-    // Fixed segments never shrink; only free text (project, title, scope, step, descriptions) truncates.
+    const total = runNow.total
+    // Border and padding take 4 cells.
+    const inner = e.props.bodyColumns - 4
+    // Full height is 9 rows. A short slot (fullscreen on a small terminal) drops the rules,
+    // then the footer, rather than scroll.
+    const hasRules = !(e.props.maxRows < 9)
+    const hasFooter = !(e.props.maxRows < 7)
+    // Fixed segments never shrink; only free text (project, scope, title, step) truncates.
     const fixed = (...nodes: unknown[]) => <Box flexShrink={0}>{nodes}</Box>
-    const sep = <Text color="subtle"> · </Text>
-    const label = (t: string) => fixed(<Text color="subtle">{t.padEnd(10)}</Text>)
-    const b = bar(runNow.total ? done.length / runNow.total : 0, width)
+    // Dim label, plain value: both timers, right-aligned.
+    const stat = (label: string, value: string) => fixed(<Text color="subtle">{'  '}{label} </Text>, <Text>{value}</Text>)
+    const rule = () => (hasRules ? <Text color="subtle" wrap="truncate-end">{'─'.repeat(Math.max(0, inner))}</Text> : null)
 
     const header = (
       <Box justifyContent="space-between">
         <Box flexShrink={1}>
-          {fixed(<Text color="claude" bold>◆ AUTOPILOT</Text>)}
-          {project ? <Text bold wrap="truncate-end">{'   '}{project}</Text> : null}
-          {runNow.total
-            ? fixed(
-                <Text>{'   '}</Text>,
-                width ? <Text color="claude">{b.filled}</Text> : null,
-                width ? <Text color="subtle">{b.empty}</Text> : null,
-                <Text>{tail}</Text>,
-              )
-            : fixed(<Text color="subtle" italic>{'   '}scoping…</Text>)}
+          {fixed(<Text color="claude" bold>◆ AUTOPILOT</Text>, runNow.project ? <Text color="subtle"> · </Text> : null)}
+          {runNow.project ? <Text bold wrap="truncate-end">{runNow.project}</Text> : null}
         </Box>
-        {fixed(
-          <Text color={okCount ? 'success' : 'subtle'}>✓ {okCount}</Text>,
-          <Text> </Text>,
-          <Text color={done.length > okCount ? 'warning' : 'subtle'}>✗ {done.length - okCount}</Text>,
-          sep,
-          <Text color="subtle">{tok}</Text>,
-          sep,
-          <Text color="subtle">{runTime}</Text>,
-        )}
+        {stat('run', dur(at - runNow.startedAt))}
       </Box>
     )
 
-    // Short slot (fullscreen on a small terminal): drop the milestone row rather than scroll.
-    const milestone =
-      runNow.scope && !(e.props.maxRows < 7) ? (
-        <Box>
-          {label('milestone')}
-          <Text bold wrap="truncate-end">{runNow.scope}</Text>
+    // Sized against worst-case counts so the bar does not jitter as digits change; the scope
+    // keeps up to 24 cells before the bar gives way. 2-cell gap plus 1 cell of slack for wide glyphs.
+    const [scopeId, scopeName] = splitScope(runNow.scope)
+    const countsLen = (total ? ` ${total}/${total}`.length : 'scoping…'.length) + `  ✓${total ?? 99} ✗${total ?? 99}`.length
+    const fit = Math.min(14, inner - 3 - Math.min(runNow.scope.length, 24) - countsLen)
+    const width = total && fit >= 6 ? fit : 0
+    const b = bar(total ? done.length / total : 0, width)
+    const milestone = (
+      <Box justifyContent="space-between">
+        <Box flexShrink={1}>
+          {scopeId ? fixed(<Text color="subtle">{scopeId} </Text>) : null}
+          <Text wrap="truncate-end">{scopeName}</Text>
         </Box>
-      ) : null
+        {fixed(
+          <Text>{'  '}</Text>,
+          b.filled ? <Text color="claude">{b.filled}</Text> : null,
+          b.empty ? <Text color="subtle">{b.empty}</Text> : null,
+          total ? <Text bold>{width ? ' ' : ''}{done.length}/{total}</Text> : <Text color="subtle" italic>scoping…</Text>,
+          <Text color={okCount ? 'success' : 'subtle'}>{'  '}✓{okCount}</Text>,
+          <Text color={badCount ? 'warning' : 'subtle'}> ✗{badCount}</Text>,
+        )}
+      </Box>
+    )
 
     const issueRow = current ? (
       <Box>
-        {label('issue')}
-        {fixed(<Text color="claude" bold>{current.id}</Text>, <Text color="subtle"> [{current.size ?? '?'}] </Text>)}
-        <Text bold wrap="truncate-end">{current.title}</Text>
+        {fixed(<Text color="claude" bold>▶ {current.id}</Text>, <Text color="subtle"> [{current.size ?? '?'}] </Text>)}
+        <Text wrap="truncate-end">{current.title}</Text>
       </Box>
     ) : (
-      <Box>
-        {label('issue')}
-        <Text color="subtle" italic wrap="truncate-end">… picking next issue</Text>
-      </Box>
+      <Text color="subtle" italic wrap="truncate-end">… picking next issue</Text>
     )
 
-    // Same row in both states, so the band keeps its height between issues.
+    // Same row in both states, so the band keeps its height between issues. The stepper never
+    // shrinks; on a narrow row the issue timer (sized for 59m 59s) gives way, then the step.
+    const stages = phases(current ? list : [], current?.kind)
     const stepNow = current ? list.at(-1)?.text ?? '' : ''
+    const stepperLen = 2 + stages.reduce((n, one, i) => n + (i ? 4 : 0) + 2 + one.name.length, 0)
+    const issueTimeLen = '  issue 59m 59s'.length
+    const hasIssueTime = !!current && inner >= stepperLen + issueTimeLen
+    const hasStep = !!stepNow && inner - stepperLen - (hasIssueTime ? issueTimeLen : 0) >= 12
     const phaseRow = (
-      <Box>
-        {label('phase')}
-        {fixed(
-          ...phases(current ? list : [], at).map((one, i) => {
-            const isSeen = one.state === 'todo' && one.mins !== undefined
-            return (
-              <Text key={one.name} color={one.state === 'done' ? 'success' : one.state === 'now' ? 'claude' : 'subtle'} bold={one.state === 'now'}>
-                {i ? (one.state === 'todo' ? ' ── ' : ' ━━ ') : ''}
-                {one.state === 'done' ? '●' : one.state === 'now' ? '◉' : isSeen ? '◌' : '○'} {one.name}
-                {one.mins !== undefined ? ` ${fmt(one.mins)}` : ''}
-              </Text>
-            )
-          }),
-        )}
-        {stepNow ? <Text color="subtle" italic wrap="truncate-end">{'   '}» {stepNow}</Text> : null}
+      <Box justifyContent="space-between">
+        <Box flexShrink={1}>
+          {fixed(
+            <Text>{'  '}</Text>,
+            ...stages.flatMap((one, i) => [
+              i ? <Text key={`to${i}`} color="subtle"> ── </Text> : null,
+              <Text key={`at${i}`} color={TONE[one.state]} bold={one.state === 'now'}>
+                {GLYPH[one.state]} {one.name}
+              </Text>,
+            ]),
+          )}
+          {hasStep ? <Text color="subtle" italic wrap="truncate-end">{'   '}» {stepNow}</Text> : null}
+        </Box>
+        {current && hasIssueTime ? stat('issue', dur(at - current.startedAt)) : null}
       </Box>
     )
 
-    const footer = (
-      <Box>
-        {fixed(<Text color={live.length >= MAX_AGENTS ? 'warning' : 'subtle'}>agents {live.length}/{MAX_AGENTS}</Text>)}
-        {current ? fixed(<Text color="subtle">{'  │  '}{w.tools} tools · {w.files.length} files · {w.commits} commits</Text>) : null}
-        {last
-          ? fixed(
-              <Text color={last.isDone ? 'success' : 'warning'}>
-                {'  │  '}last {last.isDone ? '✓' : '✗'} {last.id} {fmt(last.minutes)}
-              </Text>,
-            )
-          : null}
-        {live.slice(0, 2).map(one => (
-          <Text key={one.id} color="subtle" wrap="truncate-end">
-            {'  │  '}▸ {one.description} {fmt(minutes(one.startedAt, at))}
-          </Text>
-        ))}
+    // Stats, then the last result, show whole or not at all, so the footer never ends in a stub.
+    const agentsText = `agents ${live.length}/${MAX_AGENTS}`
+    const statsText = current ? ` · tools ${w.tools} · files ${w.files.length} · commits ${w.commits}` : ''
+    const lastText = last ? ` · last ${last.isDone ? '✓' : '✗'} ${last.id} ${dur(last.ms)}` : ''
+    const tokText = `  ${fmtTokens(runNow.tokens)} tok`
+    const room = inner - agentsText.length - tokText.length
+    const hasStats = statsText.length <= room
+    const hasLast = lastText.length <= room - (hasStats ? statsText.length : 0)
+    const footer = hasFooter ? (
+      <Box justifyContent="space-between">
+        {fixed(
+          <Text color={live.length >= MAX_AGENTS ? 'warning' : live.length ? 'claude' : 'subtle'}>{agentsText}</Text>,
+          statsText && hasStats ? <Text color="subtle">{statsText}</Text> : null,
+          last && hasLast ? <Text color={last.isDone ? 'success' : 'warning'}>{lastText}</Text> : null,
+        )}
+        {fixed(<Text color="subtle">{tokText}</Text>)}
       </Box>
-    )
+    ) : null
 
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
         {header}
         {milestone}
+        {rule()}
         {issueRow}
         {phaseRow}
+        {footer ? rule() : null}
         {footer}
       </Box>
     )

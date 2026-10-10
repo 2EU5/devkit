@@ -36,7 +36,7 @@ Autopilot checks all of these at startup and stops if any is missing.
 
 ### Progress UI
 
-While autopilot runs, devkit shows its progress in a bordered band above the prompt: a header with the project, a run progress bar (when the issue total is known), done / needs-input counts, total tokens and run time; the milestone; the current issue with size and title; a plan → code → verify → commit phase tracker with minutes per phase; running subagents; tool calls, files touched and commits for the issue; and the last result. Toasts fire when an issue finishes or needs input. It also enforces the 3-subagent cap at spawn time. The band is fed by the skill calling `mcp__devkit__status`; a run ends on `run_end`, when you stop the main loop, or after 4.5 h with no progress report.
+While autopilot runs, devkit shows its progress in a bordered band above the prompt: a header with the project and run time; the milestone with a run progress bar (when the issue total is known) and done / needs-input counts; the current issue with size and title; a plan → work → verify → commit phase tracker, its work phase named by the issue's kind (code, ui, model, art, …), with the current step and the time on the issue; and a footer with running subagents, tool calls, files touched and commits for the issue, the last result and total tokens. Both timers tick each second. Toasts fire when an issue finishes or needs input. It also enforces the 5-subagent cap at spawn time. The band is fed by the skill calling `mcp__devkit__status`; a run ends on `run_end`, when you stop the main loop, or after 4.5 h with no progress report.
 
 ### When an issue needs you
 
