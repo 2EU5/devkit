@@ -1,14 +1,14 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "devkit",
-  "description": "Autonomous Unity C# game dev workflows.",
+  "description": "Game dev workflows for Claude Code: design, audit, decide, Unity autopilot.",
   "owner": {
     "name": "Zeus"
   },
   "plugins": [
     {
       "name": "devkit",
-      "description": "Autonomous Unity C# game dev workflows: Unity Editor, Linear, Git.",
+      "description": "Game dev workflows: GDD interviews, audits, decision councils, and an autonomous Unity C# / Linear / Git loop.",
       "source": "./",
       "category": "productivity"
     }

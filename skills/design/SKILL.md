@@ -1,10 +1,10 @@
 ---
-name: gdd
-description: Interview the user about a game idea, then write a clear, detailed game design document (GDD). Use for /gdd, or when someone wants a GDD, a game design doc, or help turning a game concept into a design. Also updates an existing GDD.
+name: design
+description: Interview the user about a game idea, then write or update a game design document (GDD) with Decided/Proposed/Open tags, tunable numbers and a decision log, and offer to turn open risks into Linear issues. Use for /devkit:design, or when someone wants a GDD or help turning a game concept into a design.
 argument-hint: [game idea or existing GDD]
 ---
 
-# GDD
+# Design
 
 Turn game idea into GDD people use. GDD not full description of game in advance. GDD is tool for consistent decisions about game nobody can fully see yet. All rules follow from this.
 
