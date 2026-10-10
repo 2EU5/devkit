@@ -34,6 +34,10 @@ Autopilot checks all of these at startup and stops if any is missing.
 - It works Backlog issues that are unassigned or assigned to you, by priority then age. Statuses are picked by type (backlog / unstarted / started / completed), so custom names are fine.
 - Because the Linear MCP acts as you, the `autopilot` label marks issues autopilot started. Started issues without it are left alone.
 
+### Progress UI
+
+While autopilot runs, devkit shows its progress: a band above the prompt (issue, size, minutes used against the time limit, current step, running subagents), an **Autopilot** pane with the current issue, subagents and a run log (reopen it with `/autopilot-pane`), and toasts when an issue finishes or needs input. It also enforces the 3-subagent cap at spawn time. The pane needs a client that draws panes (the desktop app); the terminal shows the band.
+
 ### When an issue needs you
 
 Autopilot sets the issue to Todo, adds `Needs Input`, comments what it needs, and pushes any partial work to `wip/<ISSUE-ID>`. To hand it back, remove the `Needs Input` label and move the issue to Backlog.

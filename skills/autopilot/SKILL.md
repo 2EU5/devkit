@@ -38,6 +38,7 @@ Before any work, once. Any check fails: stop, report what missing.
 13. **Helper skills:** Run `devkit:decide` and `devkit:audit` unattended. Never ask user questions. Missing context: take from issue, GDD, code.
     - `devkit:decide`: real tradeoff in issue scope, 2+ viable options (architecture, approach, library, data layout). Skip trivial choices. Comment choice, reason, rejected options on issue. Design, taste or scope decision: rule 9 instead.
     - `devkit:audit`: L/XL issue: audit plan or design notes before code. Large or risky change: audit diff before commit. Fix in-scope findings. Out-of-scope findings: comment on issue.
+14. **Progress:** Report to `mcp__devkit__status` (tool missing: skip). `run_start` after preflight. `issue_start` with issue, title, size. `step` with short text on each phase change (plan, code, verify, commit); text starts `decide` or `audit` while those skills run. `issue_done` / `issue_abort` with one-line reason. `run_end` before final summary.
 
 ## Before commit, branch switch or reset
 
