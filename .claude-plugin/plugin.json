@@ -1,0 +1,8 @@
+{
+  "name": "zeus",
+  "version": "0.1.0",
+  "description": "Autonomous Unity C# game dev workflows: Unity Editor, Linear, Git.",
+  "author": {
+    "name": "Cody Stoeckel"
+  }
+}

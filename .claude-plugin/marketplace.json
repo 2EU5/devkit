@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "zeus",
+  "description": "Autonomous Unity C# game dev workflows.",
+  "owner": {
+    "name": "Cody Stoeckel"
+  },
+  "plugins": [
+    {
+      "name": "zeus",
+      "description": "Autonomous Unity C# game dev workflows: Unity Editor, Linear, Git.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
