@@ -150,7 +150,7 @@ test('phase tracker goes back and adds up minutes', async ($, on) => {
   }
   const text = await band($)
   expect(text).toMatch(/◉ code 8m/) // band time is the last status call's
-  expect(text).toMatch(/○ verify 2m/)
+  expect(text).toMatch(/◌ verify 2m/) // seen before, not current
 })
 
 test('narrow band drops the run bar but keeps the count', async ($, on) => {
@@ -168,4 +168,19 @@ test('band yields to a survey', async ($, on) => {
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   const ui = await $.ui.mount({ plugin: 'devkit', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: true, bodyColumns: 100 } as RenderPropsOf['AbovePrompt'] })
   expect((await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')).not.toMatch(/AUTOPILOT/)
+})
+
+test('picking state keeps the phase row; scoping shows before a total', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  await $.tool.call(status({ action: 'run_start', text: 'm1' }))
+  const text = await band($)
+  expect(text).toMatch(/scoping…/)
+  expect(text).toMatch(/picking next issue\|phase {5}\|○ plan/)
+})
+
+test('a short slot drops the milestone row', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  await $.tool.call(status({ action: 'run_start', text: 'm1' }))
+  const ui = await $.ui.mount({ plugin: 'devkit', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100, maxRows: 5 } as RenderPropsOf['AbovePrompt'] })
+  expect((await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')).not.toMatch(/milestone/)
 })

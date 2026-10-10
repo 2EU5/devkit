@@ -250,107 +250,113 @@ export const register: Register = on => {
     const tail = runNow.total ? ` ${done.length}/${runNow.total} issues` : ''
     const tok = `${fmtTokens(runNow.tokens)} tok`
     const runTime = `run ${fmt(minutes(runNow.startedAt, at))}`
-    const leftLen = '◆ AUTOPILOT'.length + (project ? 3 + project.length : 0) + 3 + tail.length
-    const rightLen = `✓ ${okCount} ✗ ${done.length - okCount} · ${tok} · ${runTime}`.length
-    // Border and padding take 4 cells; keep a 2-cell gap; drop the bar when under 6 cells.
-    const fit = Math.min(30, e.props.bodyColumns - 4 - 2 - leftLen - rightLen)
+    const leftLen = '◆ AUTOPILOT'.length + (project ? 3 + project.length : 0) + (tail ? 3 + tail.length : 0)
+    // Sized against a worst-case right side so the bar does not jitter as digits change.
+    const rightLen = '✓ 99 ✗ 99 · 999k tok · run 9h59'.length
+    // Border and padding take 4 cells, then a 2-cell gap and 1 cell of slack for wide glyphs.
+    const fit = Math.min(30, e.props.bodyColumns - 4 - 3 - leftLen - rightLen)
     const width = fit >= 6 ? fit : 0
     const last = done.at(-1)
+    // Fixed segments never shrink; only free text (project, title, scope, step, descriptions) truncates.
+    const fixed = (...nodes: unknown[]) => <Box flexShrink={0}>{nodes}</Box>
     const sep = <Text color="subtle"> · </Text>
-    const label = (t: string) => <Text color="subtle">{t.padEnd(10)}</Text>
-    const cells = (ratio: number, color: string, tail: string) => {
-      const b = bar(ratio, width)
-      return [
-        ...(width ? [<Text color={color}>{b.filled}</Text>, <Text color="subtle">{b.empty}</Text>] : []),
-        <Text>{tail}</Text>,
-      ]
-    }
+    const label = (t: string) => fixed(<Text color="subtle">{t.padEnd(10)}</Text>)
+    const b = bar(runNow.total ? done.length / runNow.total : 0, width)
 
     const header = (
       <Box justifyContent="space-between">
-        <Box>
-          <Text color="claude" bold>◆ AUTOPILOT</Text>
-          {project ? <Text bold>{'   '}{project}</Text> : null}
-          <Text>{'   '}</Text>
-          {runNow.total ? cells(done.length / runNow.total, 'claude', tail) : null}
+        <Box flexShrink={1}>
+          {fixed(<Text color="claude" bold>◆ AUTOPILOT</Text>)}
+          {project ? <Text bold wrap="truncate-end">{'   '}{project}</Text> : null}
+          {runNow.total
+            ? fixed(
+                <Text>{'   '}</Text>,
+                width ? <Text color="claude">{b.filled}</Text> : null,
+                width ? <Text color="subtle">{b.empty}</Text> : null,
+                <Text>{tail}</Text>,
+              )
+            : fixed(<Text color="subtle" italic>{'   '}scoping…</Text>)}
         </Box>
-        <Box>
-          <Text color="success">✓ {okCount}</Text>
-          <Text> </Text>
-          <Text color={done.length > okCount ? 'warning' : 'subtle'}>✗ {done.length - okCount}</Text>
-          {sep}
-          <Text color="subtle">{tok}</Text>
-          {sep}
-          <Text color="subtle">{runTime}</Text>
-        </Box>
+        {fixed(
+          <Text color={okCount ? 'success' : 'subtle'}>✓ {okCount}</Text>,
+          <Text> </Text>,
+          <Text color={done.length > okCount ? 'warning' : 'subtle'}>✗ {done.length - okCount}</Text>,
+          sep,
+          <Text color="subtle">{tok}</Text>,
+          sep,
+          <Text color="subtle">{runTime}</Text>,
+        )}
       </Box>
     )
 
-    const milestone = runNow.scope ? (
+    // Short slot (fullscreen on a small terminal): drop the milestone row rather than scroll.
+    const milestone =
+      runNow.scope && !(e.props.maxRows < 7) ? (
+        <Box>
+          {label('milestone')}
+          <Text bold wrap="truncate-end">{runNow.scope}</Text>
+        </Box>
+      ) : null
+
+    const issueRow = current ? (
       <Box>
-        {label('milestone')}
-        <Text bold wrap="truncate-end">{runNow.scope}</Text>
+        {label('issue')}
+        {fixed(<Text color="claude" bold>{current.id}</Text>, <Text color="subtle"> [{current.size ?? '?'}] </Text>)}
+        <Text bold wrap="truncate-end">{current.title}</Text>
       </Box>
-    ) : null
+    ) : (
+      <Box>
+        {label('issue')}
+        <Text color="subtle" italic wrap="truncate-end">… picking next issue</Text>
+      </Box>
+    )
+
+    // Same row in both states, so the band keeps its height between issues.
+    const stepNow = current ? list.at(-1)?.text ?? '' : ''
+    const phaseRow = (
+      <Box>
+        {label('phase')}
+        {fixed(
+          ...phases(current ? list : [], at).map((one, i) => {
+            const isSeen = one.state === 'todo' && one.mins !== undefined
+            return (
+              <Text key={one.name} color={one.state === 'done' ? 'success' : one.state === 'now' ? 'claude' : 'subtle'} bold={one.state === 'now'}>
+                {i ? (one.state === 'todo' ? ' ── ' : ' ━━ ') : ''}
+                {one.state === 'done' ? '●' : one.state === 'now' ? '◉' : isSeen ? '◌' : '○'} {one.name}
+                {one.mins !== undefined ? ` ${fmt(one.mins)}` : ''}
+              </Text>
+            )
+          }),
+        )}
+        {stepNow ? <Text color="subtle" italic wrap="truncate-end">{'   '}» {stepNow}</Text> : null}
+      </Box>
+    )
 
     const footer = (
       <Box>
-        <Text color={live.length >= MAX_AGENTS ? 'warning' : 'subtle'} wrap="truncate-end">⚙ {live.length}/{MAX_AGENTS} agents</Text>
+        {fixed(<Text color={live.length >= MAX_AGENTS ? 'warning' : 'subtle'}>agents {live.length}/{MAX_AGENTS}</Text>)}
+        {current ? fixed(<Text color="subtle">{'  │  '}{w.tools} tools · {w.files.length} files · {w.commits} commits</Text>) : null}
+        {last
+          ? fixed(
+              <Text color={last.isDone ? 'success' : 'warning'}>
+                {'  │  '}last {last.isDone ? '✓' : '✗'} {last.id} {fmt(last.minutes)}
+              </Text>,
+            )
+          : null}
         {live.slice(0, 2).map(one => (
           <Text key={one.id} color="subtle" wrap="truncate-end">
-            {'  '}▸ {one.description} {fmt(minutes(one.startedAt, at))}
+            {'  │  '}▸ {one.description} {fmt(minutes(one.startedAt, at))}
           </Text>
         ))}
-        {current ? (
-          <Text color="subtle" wrap="truncate-end">
-            {'  │  '}{w.tools} tools · {w.files.length} files · {w.commits} commits
-          </Text>
-        ) : null}
-        {last ? (
-          <Text color={last.isDone ? 'success' : 'warning'} wrap="truncate-end">
-            {'  │  '}last {last.isDone ? '✓' : '✗'} {last.id} {fmt(last.minutes)}
-          </Text>
-        ) : null}
       </Box>
     )
-
-    if (!current) {
-      return (
-        <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
-          {header}
-          {milestone}
-          <Box>
-            {label('issue')}
-            <Text color="subtle" italic>… picking next issue</Text>
-          </Box>
-          {footer}
-        </Box>
-      )
-    }
-
-    const stepNow = list.at(-1)?.text ?? ''
 
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
         {header}
         {milestone}
-        <Box>
-          {label('issue')}
-          <Text color="claude" bold>{current.id}</Text>
-          <Text color="subtle"> [{current.size ?? '?'}] </Text>
-          <Text bold wrap="truncate-end">{current.title}</Text>
-        </Box>
-        <Box>
-          {label('phase')}
-          {phases(list, at).map((one, i) => (
-            <Text key={one.name} color={one.state === 'done' ? 'success' : one.state === 'now' ? 'claude' : 'subtle'} bold={one.state === 'now'}>
-              {i ? (one.state === 'todo' ? ' ── ' : ' ━━ ') : ''}
-              {one.state === 'done' ? '●' : one.state === 'now' ? '◉' : '○'} {one.name}
-              {one.mins !== undefined ? ` ${fmt(one.mins)}` : ''}
-            </Text>
-          ))}
-          {stepNow ? <Text color="subtle" italic wrap="truncate-end">{'   '}» {stepNow}</Text> : null}
-        </Box>
+        {issueRow}
+        {phaseRow}
         {footer}
       </Box>
     )
