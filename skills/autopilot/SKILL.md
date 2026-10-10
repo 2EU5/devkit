@@ -36,9 +36,9 @@ Before any work, once. Any check fails: stop, report what missing.
 11. **Stuck:** Same issue fails 3 attempts: Abort procedure, comment blocker.
 12. **Time limit:** On issue start, assess complexity: S, M, L, XL. Limit: S 15 min, M 30 min, L 1 h, XL 2 h. L/XL: split into sub-issues first if possible. Set Linear estimate: t-shirt scale: match by name; other scales: lowest four non-zero values; estimates disabled or scale unknown: skip, size in comment only. Comment size, limit, start time (shell `date`). Elapsed time checked between steps, so keep each step short. Limit exceeded: Abort procedure, comment done, left, cause of overrun, suggested next step or split.
 13. **Subagents:** Allowed. Max 3 concurrent. Subagents: code in separate files, research, review. Subagents: no Unity tools, no git, no Linear status changes. Never two agents on same file. Main agent verifies all subagent files, drives Editor, commits. Exception: `devkit:decide` and `devkit:audit` may run their own read-only subagents beyond cap.
-14. **Helper skills:** Use `devkit:decide` and `devkit:audit` in cases below. Run unattended: never ask user questions. Fill missing context from issue, GDD, code.
-    - `devkit:decide`: real tradeoff inside issue scope with 2+ viable options (architecture, approach, library, data layout). Not trivial choices. Record choice, reason, rejected options in Linear issue comment. Decision needs user (design, taste, scope): rule 10 instead.
-    - `devkit:audit`: audit own plan or design notes before L/XL implementation; audit own diff before commit when change is large or risky. Apply in-scope fixes yourself. Out-of-scope findings: comment on issue.
+14. **Helper skills:** Run `devkit:decide` and `devkit:audit` unattended. Never ask user questions. Missing context: take from issue, GDD, code.
+    - `devkit:decide`: real tradeoff in issue scope, 2+ viable options (architecture, approach, library, data layout). Skip trivial choices. Comment choice, reason, rejected options on issue. Design, taste or scope decision: rule 10 instead.
+    - `devkit:audit`: L/XL issue: audit plan or design notes before code. Large or risky change: audit diff before commit. Fix in-scope findings. Out-of-scope findings: comment on issue.
 
 ## Before branch switch or reset
 
