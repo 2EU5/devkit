@@ -8,7 +8,7 @@ export type AgentRow = {
 }
 export type Run = { project: string; scope: string; startedAt: number; total?: number; tokens: number }
 export type StepEntry = { text: string; at: number }
-export type Work = { tools: number; files: string[]; commits: number; tokens: number }
+export type Work = { tools: number; files: string[]; commits: number }
 export type IssueResult = { id: string; isDone: boolean; minutes: number; note: string }
 
 declare module 'claude-code' {

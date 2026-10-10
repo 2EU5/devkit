@@ -1,16 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { AgentRow, Issue, IssueResult, Run, Size, StepEntry, Work } from '../types'
+import type { AgentRow, IssueResult, Run, Size, StepEntry, Work } from '../types'
 
 // Live view of an /autopilot run: a bordered band above the prompt, toasts, and the
 // skill's rule 12 cap (max 3 concurrent subagents) enforced at spawn.
 
 const TOOL = 'mcp__devkit__status'
 const MAX_AGENTS = 3
-const LIMIT_MIN: Record<Size, number> = { S: 7.5, M: 15, L: 30, XL: 60 }
 const PHASES = ['plan', 'code', 'verify', 'commit'] as const
-const NO_WORK: Work = { tools: 0, files: [], commits: 0, tokens: 0 }
+const NO_WORK: Work = { tools: 0, files: [], commits: 0 }
 
 const isRunning = atom({ plugin: 'devkit', key: 'isRunning' } as const, false)
 const issue = atom({ plugin: 'devkit', key: 'issue' } as const, null)
@@ -33,12 +32,6 @@ type StatusInput = {
 
 // decide and audit may run their own subagents beyond the cap (skill rule 12).
 export const isCapExempt = (s: string) => /^(decide|audit)\b/i.test(s)
-
-export const elapsed = (one: Issue, at: number) => {
-  const limit = one.size ? LIMIT_MIN[one.size] : undefined
-  const used = minutes(one.startedAt, at)
-  return { used, limit, isOver: limit !== undefined && used > limit }
-}
 
 const minutes = (from: number, to: number) => Math.max(0, Math.floor((to - from) / 60_000))
 export const fmtTokens = (n: number) =>
@@ -178,7 +171,6 @@ export const register: Register = on => {
     if (u && (await read($, isRunning))) {
       const n = u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
       await update($, run, r => (r ? { ...r, tokens: r.tokens + n } : r))
-      if (await read($, issue)) await update($, work, w => ({ ...w, tokens: w.tokens + n }))
     }
     return response
   })
@@ -237,8 +229,8 @@ export const register: Register = on => {
       <Box justifyContent="space-between">
         <Box>
           <Text color="claude" bold>◆ AUTOPILOT</Text>
-          {runNow.project ? <Text bold> {runNow.project}</Text> : null}
-          <Text> </Text>
+          {runNow.project ? <Text bold>{'   '}{runNow.project}</Text> : null}
+          <Text>{'   '}</Text>
           {runNow.total ? cells(done.length / runNow.total, 'claude', `${done.length}/${runNow.total} issues`) : null}
         </Box>
         <Box>
@@ -270,7 +262,7 @@ export const register: Register = on => {
         ))}
         {current ? (
           <Text color="subtle">
-            {'  │  '}{w.tools} tools · {w.files.length} files · {w.commits} commits · {fmtTokens(w.tokens)} tok
+            {'  │  '}{w.tools} tools · {w.files.length} files · {w.commits} commits
           </Text>
         ) : null}
         {last ? (
@@ -295,13 +287,10 @@ export const register: Register = on => {
       )
     }
 
-    const time = elapsed(current, at)
-    const ratio = time.limit ? time.used / time.limit : 0
-    const timeColor = time.isOver ? 'error' : ratio >= 0.8 ? 'warning' : 'success'
     const stepNow = list.at(-1)?.text ?? ''
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={time.isOver ? 'error' : 'claude'} paddingX={1}>
+      <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
         {header}
         {milestone}
         <Box>
@@ -320,14 +309,6 @@ export const register: Register = on => {
             </Text>
           ))}
           {stepNow ? <Text color="subtle" italic wrap="truncate-end">{'   '}» {stepNow}</Text> : null}
-        </Box>
-        <Box>
-          {label('time')}
-          {cells(
-            ratio,
-            timeColor,
-            `${fmt(time.used)}/${time.limit ? fmt(time.limit) : '?'}${time.limit ? ` ${Math.round(ratio * 100)}%` : ''}${time.isOver ? ' over limit' : ''}`,
-          )}
         </Box>
         {footer}
       </Box>
