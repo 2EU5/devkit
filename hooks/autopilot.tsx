@@ -8,9 +8,9 @@ import type { AgentRow, Issue, IssueResult, Run, Size, StepEntry, Work } from '.
 
 const TOOL = 'mcp__devkit__status'
 const MAX_AGENTS = 3
-const LIMIT_MIN: Record<Size, number> = { S: 15, M: 30, L: 60, XL: 120 }
+const LIMIT_MIN: Record<Size, number> = { S: 7.5, M: 15, L: 30, XL: 60 }
 const PHASES = ['plan', 'code', 'verify', 'commit'] as const
-const NO_WORK: Work = { tools: 0, files: [], commits: 0 }
+const NO_WORK: Work = { tools: 0, files: [], commits: 0, tokens: 0 }
 
 const isRunning = atom({ plugin: 'devkit', key: 'isRunning' } as const, false)
 const issue = atom({ plugin: 'devkit', key: 'issue' } as const, null)
@@ -28,6 +28,7 @@ type StatusInput = {
   size?: Size
   text?: string
   total?: number
+  project?: string
 }
 
 // decide and audit may run their own subagents beyond the cap (skill rule 12).
@@ -40,6 +41,8 @@ export const elapsed = (one: Issue, at: number) => {
 }
 
 const minutes = (from: number, to: number) => Math.max(0, Math.floor((to - from) / 60_000))
+export const fmtTokens = (n: number) =>
+  n < 1000 ? `${n}` : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1)}M`
 export const fmt = (m: number) => (m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`)
 
 // Smooth bar with eighth-block tips: ratio 0..1 (clamped) over `width` cells.
@@ -80,6 +83,7 @@ export const register: Register = on => {
           size: { type: 'string', enum: ['S', 'M', 'L', 'XL'] },
           text: { type: 'string', description: 'run_start: scope (milestone). step: step name. done/abort: one-line reason' },
           total: { type: 'number', description: 'run_start: issues in scope' },
+          project: { type: 'string', description: 'run_start: Linear project name' },
         },
         required: ['action'],
       },
@@ -99,15 +103,18 @@ export const register: Register = on => {
     const id = input.issue ?? current?.id ?? '?'
 
     switch (input.action) {
-      case 'run_start':
+      case 'run_start': {
+        const cwd = input.project ? '' : await $.session.cwd().catch(() => '')
+        const project = input.project || (cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? '')
         await update($, isRunning, () => true)
-        await update($, run, () => ({ scope: input.text ?? '', startedAt: at, total: input.total }) satisfies Run)
+        await update($, run, () => ({ project, scope: input.text ?? '', startedAt: at, total: input.total, tokens: 0 }) satisfies Run)
         await update($, issue, () => null)
         await update($, agents, () => [])
         await update($, steps, () => [])
         await update($, work, () => NO_WORK)
         await update($, results, () => [])
         break
+      }
       case 'issue_start':
         await update($, issue, () => ({ id, title: input.title ?? '', size: input.size, startedAt: at }))
         await update($, steps, () => [])
@@ -164,6 +171,18 @@ export const register: Register = on => {
     return ran
   })
 
+  // Token totals for the run and the current issue: every model request, main loop and subagents.
+  on('turn.step', async function* ($, e, next) {
+    const response = yield* next(e)
+    const u = response.usage
+    if (u && (await read($, isRunning))) {
+      const n = u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
+      await update($, run, r => (r ? { ...r, tokens: r.tokens + n } : r))
+      if (await read($, issue)) await update($, work, w => ({ ...w, tokens: w.tokens + n }))
+    }
+    return response
+  })
+
   // Rule 12 cap; only main-loop spawns during a run count.
   on('agent.spawn', async ($, e, next) => {
     if (e.parentAgentId || e.workflow || !(await read($, isRunning))) {
@@ -208,36 +227,37 @@ export const register: Register = on => {
     const okCount = done.filter(one => one.isDone).length
     const last = done.at(-1)
     const sep = <Text color="subtle"> · </Text>
-    const barRow = (p: { label: string; ratio: number; color: string; tail: string }) => {
-      const b = bar(p.ratio, width)
-      return (
-        <Box>
-          <Text color="subtle">{p.label.padEnd(6)}</Text>
-          <Text color={p.color}>{b.filled}</Text>
-          <Text color="subtle">{b.empty}</Text>
-          <Text> {p.tail}</Text>
-        </Box>
-      )
+    const label = (t: string) => <Text color="subtle">{t.padEnd(10)}</Text>
+    const cells = (ratio: number, color: string, tail: string) => {
+      const b = bar(ratio, width)
+      return [<Text color={color}>{b.filled}</Text>, <Text color="subtle">{b.empty}</Text>, <Text> {tail}</Text>]
     }
 
     const header = (
       <Box justifyContent="space-between">
         <Box>
           <Text color="claude" bold>◆ AUTOPILOT</Text>
-          {runNow.scope ? <Text bold> {runNow.scope}</Text> : null}
+          {runNow.project ? <Text bold> {runNow.project}</Text> : null}
+          <Text> </Text>
+          {runNow.total ? cells(done.length / runNow.total, 'claude', `${done.length}/${runNow.total} issues`) : null}
         </Box>
         <Box>
           <Text color="success">✓ {okCount}</Text>
           <Text> </Text>
           <Text color={done.length > okCount ? 'warning' : 'subtle'}>✗ {done.length - okCount}</Text>
           {sep}
+          <Text color="subtle">{fmtTokens(runNow.tokens)} tok</Text>
+          {sep}
           <Text color="subtle">run {fmt(minutes(runNow.startedAt, at))}</Text>
         </Box>
       </Box>
     )
 
-    const runBar = runNow.total ? (
-      barRow({ label: 'run', ratio: done.length / runNow.total, color: 'claude', tail: `${done.length}/${runNow.total} issues` })
+    const milestone = runNow.scope ? (
+      <Box>
+        {label('milestone')}
+        <Text bold wrap="truncate-end">{runNow.scope}</Text>
+      </Box>
     ) : null
 
     const footer = (
@@ -250,7 +270,7 @@ export const register: Register = on => {
         ))}
         {current ? (
           <Text color="subtle">
-            {'  │  '}{w.tools} tools · {w.files.length} files · {w.commits} commits
+            {'  │  '}{w.tools} tools · {w.files.length} files · {w.commits} commits · {fmtTokens(w.tokens)} tok
           </Text>
         ) : null}
         {last ? (
@@ -265,8 +285,11 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
           {header}
-          <Text color="subtle" italic>… picking next issue</Text>
-          {runBar}
+          {milestone}
+          <Box>
+            {label('issue')}
+            <Text color="subtle" italic>… picking next issue</Text>
+          </Box>
           {footer}
         </Box>
       )
@@ -280,13 +303,15 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" borderStyle="round" borderColor={time.isOver ? 'error' : 'claude'} paddingX={1}>
         {header}
+        {milestone}
         <Box>
-          <Text color="claude" bold>▶ {current.id}</Text>
+          {label('issue')}
+          <Text color="claude" bold>{current.id}</Text>
           <Text color="subtle"> [{current.size ?? '?'}] </Text>
           <Text bold wrap="truncate-end">{current.title}</Text>
         </Box>
         <Box>
-          <Text color="subtle">{'phase '.padEnd(6)}</Text>
+          {label('phase')}
           {phases(list, at).map((one, i) => (
             <Text key={one.name} color={one.state === 'done' ? 'success' : one.state === 'now' ? 'claude' : 'subtle'} bold={one.state === 'now'}>
               {i ? (one.state === 'todo' ? ' ── ' : ' ━━ ') : ''}
@@ -296,13 +321,14 @@ export const register: Register = on => {
           ))}
           {stepNow ? <Text color="subtle" italic wrap="truncate-end">{'   '}» {stepNow}</Text> : null}
         </Box>
-        {barRow({
-          label: 'time',
-          ratio,
-          color: timeColor,
-          tail: `${fmt(time.used)}/${time.limit ? fmt(time.limit) : '?'}${time.limit ? ` ${Math.round(ratio * 100)}%` : ''}${time.isOver ? ' over limit' : ''}`,
-        })}
-        {runBar}
+        <Box>
+          {label('time')}
+          {cells(
+            ratio,
+            timeColor,
+            `${fmt(time.used)}/${time.limit ? fmt(time.limit) : '?'}${time.limit ? ` ${Math.round(ratio * 100)}%` : ''}${time.isOver ? ' over limit' : ''}`,
+          )}
+        </Box>
         {footer}
       </Box>
     )

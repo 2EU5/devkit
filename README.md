@@ -36,7 +36,7 @@ Autopilot checks all of these at startup and stops if any is missing.
 
 ### Progress UI
 
-While autopilot runs, devkit shows its progress in a bordered band above the prompt: scope, run time and done / needs-input counts; the current issue with size and title; a plan → code → verify → commit phase tracker with minutes per phase; a progress bar of minutes used against the size's time limit (green, yellow at 80%, red over); a run progress bar when the issue total is known; running subagents; tool calls, files touched and commits for the issue; and the last result. Toasts fire when an issue finishes or needs input. It also enforces the 3-subagent cap at spawn time.
+While autopilot runs, devkit shows its progress in a bordered band above the prompt: a header with the project, a run progress bar (when the issue total is known), done / needs-input counts, total tokens and run time; the milestone; the current issue with size and title; a plan → code → verify → commit phase tracker with minutes per phase; a progress bar of minutes used against the size's time limit (green, yellow at 80%, red over); running subagents; tool calls, files touched, commits and tokens for the issue; and the last result. Toasts fire when an issue finishes or needs input. It also enforces the 3-subagent cap at spawn time.
 
 ### When an issue needs you
 

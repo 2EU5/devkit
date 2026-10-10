@@ -14,24 +14,30 @@ const SPAWN = {
 
 test('band shows issue, phases, time bar and work', async ($, on) => {
   const clock = mock.clock(on, { now: 0 })
-  await $.tool.call(status({ action: 'run_start', text: 'm2.5', total: 4 }))
+  on('turn.step', async function* () {
+    return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'm' } } as never
+  })
+  await $.tool.call(status({ action: 'run_start', project: 'Cell', text: 'm2.5', total: 4 }))
   await $.tool.call(status({ action: 'issue_start', issue: 'GAME-42', title: 'Jump', size: 'M' }))
   await $.tool.call(status({ action: 'step', text: 'plan' }))
   await clock.advance(3 * 60_000)
   await $.tool.call(status({ action: 'step', text: 'code player controller' }))
-  await clock.advance(21 * 60_000)
+  await clock.advance(9 * 60_000)
   await $.tool.call(status({ action: 'step', text: 'verify' }))
+  for await (const _ of $.turn.step({ turnId: 't', index: 0, model: 'm', messageCount: 1 })) void _
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'devkit', surface, component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 100 } as RenderPropsOf['AbovePrompt'] })
     const text = (await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')
-    expect(text).toMatch(/AUTOPILOT/)
+    // header carries the run bar; milestone and issue rows follow, labelled
+    expect(text).toMatch(/AUTOPILOT\| Cell\| \|█*\|░+\| 0\/4 issues\|.*\|milestone \|m2\.5\|issue {5}\|GAME-42/)
     expect(text).toMatch(/m2\.5/)
     expect(text).toMatch(/GAME-42/)
     expect(text).toMatch(/● plan 3m/)
-    expect(text).toMatch(/● code 21m/)
+    expect(text).toMatch(/● code 9m/)
     expect(text).toMatch(/◉ verify/)
-    expect(text).toMatch(/24m\/30m 80%/)
+    expect(text).toMatch(/12m\/15m 80%/)
+    expect(text).toMatch(/1\.5k tok\|.*1\.5k tok/)
     expect(text).toMatch(/0\/4 issues/)
     await ui.unmount()
   }
