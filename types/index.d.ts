@@ -1,7 +1,6 @@
 export type Size = 'S' | 'M' | 'L' | 'XL'
-// kind: one lowercase word naming the issue's work phase (code, ui, model, art, …).
-// plan: the issue's own steps, when it sent them.
-export type Issue = { id: string; title: string; size?: Size; kind?: string; plan?: string[]; startedAt: number }
+// kind: one lowercase word naming the issue's main work (code, ui, model, art, …).
+export type Issue = { id: string; title: string; size?: Size; kind?: string; startedAt: number }
 export type AgentRow = {
   id: string
   description: string

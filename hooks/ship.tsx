@@ -8,10 +8,8 @@ import type { AgentRow, AutoMark, IssueResult, Run, Size, StepEntry, Work } from
 
 const TOOL = 'mcp__studio__status'
 const MAX_AGENTS = 5
-// The work phase is named per issue (its kind: code, ui, model, art, …). A step starting with
-// the kind or any of these words enters it; without a kind it takes the first such word seen.
+// A step starting with the issue's kind (code, ui, model, art, …) or any of these words enters work.
 const WORK_WORDS = ['build', 'code', 'ui', 'model', 'art']
-const DEFAULT_KIND = 'build'
 const NO_WORK: Work = { tools: 0, files: [], commits: 0 }
 // No status call for longer than the XL limit plus slack: the run died without run_end.
 const STALE_MS = 4.5 * 60 * 60_000
@@ -37,7 +35,6 @@ type StatusInput = {
   total?: number
   project?: string
   auto?: boolean
-  steps?: string[]
 }
 
 // council, audit and code-review (reported as audit) may run their own subagents beyond the cap (skill rule 12).
@@ -48,10 +45,8 @@ export const isCommit = (command: string) => COMMIT.test(command)
 // set for shell tools only. shortcut: a search pattern ending in `|git ` is refused too; rare, costs one call.
 export const isSubagentBanned = (tool: string, command = '') =>
   /(?:^|_)unity/i.test(tool) || /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:git|unity)\b/.test(command)
-// A step starts with a phase word as a whole word: "plan" yes, "planet" no. Words may be the
-// issue's own step names, so they are escaped.
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-const startsWord = (text: string, word: string) => text === word || new RegExp(`^${escape(word)}(?!\\w)`).test(text)
+// A step starts with a phase word as a whole word: "plan" yes, "planet" no.
+const startsWord = (text: string, word: string) => text === word || new RegExp(`^${word}\\b`).test(text)
 
 export const fmtTokens = (n: number) =>
   n < 1000 ? `${n}` : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1)}M`
@@ -69,78 +64,39 @@ export const dur = (ms: number) => {
 export const toKind = (s?: string) =>
   s?.trim().toLowerCase().split(/\s+/)[0]?.replace(/[^a-z0-9-]/g, '').slice(0, 10) || undefined
 
-// The issue's own steps: up to 8 trimmed names of up to 20 cells, or undefined.
-export const toPlan = (list?: unknown) => {
-  const names = Array.isArray(list) ? list.filter((one): one is string => typeof one === 'string').map(one => one.trim().slice(0, 20)).filter(Boolean).slice(0, 8) : []
-  return names.length >= 2 ? names : undefined
-}
-
 // "M2.5 · Organic world" -> ['M2.5', 'Organic world'], so a short id can be drawn dim.
 export const splitScope = (scope: string): readonly [string, string] => {
   const hit = /^(\S+?)(?:\s+[·—–-]|:)\s+(.+)$/.exec(scope)
   return hit?.[1] && hit[2] && hit[1].length <= 12 ? [hit[1], hit[2]] : ['', scope]
 }
 
-// Run bar over `width` cells, one tone per issue in queue order: done, needs input, the one in
-// progress, then the rest. Issues that fit at 2+ cells each get their own segment with a gap;
-// a longer queue maps cells onto issues proportionally. Heavy fill on a light track, so it reads
-// without colour too. Returns runs of same-tone text.
+// The run bar's blocks, one tone per issue in queue order: done, needs input, the one in
+// progress, then the rest. Split: one block per issue, drawn with gaps; else neighbours of one
+// tone merge into one block. A block's count is how many issues it stands for.
 export type BarTone = 'ok' | 'bad' | 'now' | 'todo'
-export const runBar = (done: readonly boolean[], hasCurrent: boolean, total: number, width: number) => {
+export const runBar = (done: readonly boolean[], hasCurrent: boolean, total: number, split: boolean) => {
   const n = Math.max(total, done.length + (hasCurrent ? 1 : 0))
-  const toneOf = (i: number): BarTone =>
-    i < done.length ? (done[i] ? 'ok' : 'bad') : i === done.length && hasCurrent ? 'now' : 'todo'
-  const glyph = (tone: BarTone) => (tone === 'todo' ? '─' : '━')
-  const seg = n ? Math.floor((width + 1) / n) - 1 : 0
-  const cells: [string, BarTone][] = !n || width < 1
-    ? []
-    : seg >= 2
-      ? Array.from({ length: n }, (_, i) => toneOf(i)).flatMap((tone, i) => [
-          ...(i ? [[' ', tone] as [string, BarTone]] : []),
-          ...Array.from({ length: seg }, () => [glyph(tone), tone] as [string, BarTone]),
-        ])
-      : Array.from({ length: width }, (_, c) => {
-          const tone = toneOf(Math.floor((c * n) / width))
-          return [glyph(tone), tone]
-        })
-  const parts: { text: string; tone: BarTone }[] = []
-  for (const [text, tone] of cells) {
-    const prev = parts.at(-1)
-    if (prev?.tone === tone) prev.text += text
-    else parts.push({ text, tone })
+  const blocks: { tone: BarTone; count: number }[] = []
+  for (let i = 0; i < n; i++) {
+    const tone: BarTone = i < done.length ? (done[i] ? 'ok' : 'bad') : i === done.length && hasCurrent ? 'now' : 'todo'
+    const prev = blocks.at(-1)
+    if (!split && prev?.tone === tone) prev.count++
+    else blocks.push({ tone, count: 1 })
   }
-  return parts
+  return blocks
 }
 
-// Phase tracker over the issue's steps: its own plan when it sent one, else plan, its kind,
-// verify, commit. A reported step enters the phase it names (going back too): the longest step
-// name it starts with, else the plan, verify or commit step its first word names, else the work
-// step for a work word. Other steps (council, audit, …) stay where they are. Auto marks come from
-// the work itself (an edit, a verify, a commit) and only move forward. A phase left behind by
-// going back is `seen`.
-export const phases = (list: readonly StepEntry[], kind?: string, plan?: readonly string[]) => {
-  const reported = list.filter(one => !one.auto).map(one => one.text.trim().toLowerCase())
-  const firstWork = reported.map(text => WORK_WORDS.find(word => startsWord(text, word))).find(Boolean)
-  const names = plan?.length ? [...plan] : ['plan', kind || firstWork || DEFAULT_KIND, 'verify', 'commit']
-  const lower = names.map(name => name.toLowerCase())
-  const named = (word: string) => lower.findIndex(name => startsWord(name, word))
-  const isFixed = (name: string) => ['plan', 'verify', 'commit'].some(word => startsWord(name, word))
-  const work = Math.max(0, lower.findIndex((name, i) => i > 0 && !isFixed(name)))
-  const at: Record<AutoMark, number> = {
-    plan: 0,
-    work: work || Math.min(1, names.length - 1),
-    verify: named('verify'),
-    commit: named('commit') >= 0 ? named('commit') : names.length - 1,
-  }
+// Phase tracker: plan, work, verify, commit. A reported step starting with a phase word enters
+// that phase (going back too); the issue's kind and the work words enter work. Other steps
+// (council, audit, …) stay where they are. Auto marks come from the work itself (an edit, a
+// verify, a commit) and only move forward. A phase left behind by going back is `seen`.
+export const PHASES = ['plan', 'work', 'verify', 'commit'] as const
+export const phases = (list: readonly StepEntry[], kind?: string) => {
+  const at: Record<AutoMark, number> = { plan: 0, work: 1, verify: 2, commit: 3 }
   const find = (text: string) => {
-    let best = -1
-    lower.forEach((name, i) => {
-      if (startsWord(text, name) && (best < 0 || name.length > lower[best]!.length)) best = i
-    })
-    if (best >= 0) return best
-    const fixed = ['plan', 'verify', 'commit'].find(word => startsWord(text, word))
-    if (fixed) return named(fixed)
-    return [kind, ...WORK_WORDS].some(word => word && startsWord(text, word)) ? at.work : -1
+    const named = PHASES.findIndex(word => startsWord(text, word))
+    if (named >= 0) return named
+    return [kind, ...WORK_WORDS].some(word => word && startsWord(text, word)) ? 1 : -1
   }
   const seen = new Set<number>()
   let current = -1
@@ -150,11 +106,15 @@ export const phases = (list: readonly StepEntry[], kind?: string, plan?: readonl
     current = hit
     seen.add(hit)
   }
-  return names.map((name, i) => {
+  return PHASES.map((name, i) => {
     const state = i < current ? 'done' : i === current ? 'now' : seen.has(i) ? 'seen' : 'todo'
     return { name, state } as const
   })
 }
+
+// The step text without the phase word it starts with: "verify: tests" -> "tests", "verify" -> "".
+export const stepDetail = (text: string, phase?: string) =>
+  phase && startsWord(text.toLowerCase(), phase) ? text.slice(phase.length).replace(/^[\s:—–-]+/, '') : text
 
 const GLYPH = { done: '✓', now: '●', seen: '◌', todo: '○' } as const
 const TONE = { done: 'success', now: 'claude', seen: 'subtle', todo: 'subtle' } as const
@@ -193,16 +153,10 @@ export const register: Register = on => {
           text: {
             type: 'string',
             description:
-              'run_start, issue_start: scope (milestone, e.g. "M2.5 · Organic world"); issue_start only when the milestone changes. step: short text starting with the phase word (plan, the issue kind, verify, commit). done/abort: one-line reason',
+              'run_start, issue_start: scope (milestone, e.g. "M2.5 · Organic world"); issue_start only when the milestone changes. step: short text starting with the phase word (plan, the issue kind or work, verify, commit). done/abort: one-line reason',
           },
           total: { type: 'number', description: 'any action: issues in scope (updated as sub-issues are added)' },
           project: { type: 'string', description: 'run_start: Linear project name' },
-          steps: {
-            type: 'array',
-            items: { type: 'string' },
-            description:
-              'issue_start or step: this issue\'s steps in order, 3 to 8 short names (plan first, verify and commit last), e.g. ["plan", "balance round 1", "balance round 2", "verify", "commit"]. Replaces the default plan, kind, verify, commit.',
-          },
           auto: { type: 'boolean', description: 'run_start: true in auto mode (/studio:ship auto), false when attended' },
         },
         required: ['action'],
@@ -247,12 +201,11 @@ export const register: Register = on => {
         break
       }
       case 'issue_start':
-        await update($, issue, () => ({ id, title: input.title ?? '', size: input.size, kind: toKind(input.kind), plan: toPlan(input.steps), startedAt: at }))
+        await update($, issue, () => ({ id, title: input.title ?? '', size: input.size, kind: toKind(input.kind), startedAt: at }))
         await update($, steps, () => [{ text: '', at, auto: 'plan' }])
         await update($, work, () => NO_WORK)
         break
       case 'step':
-        if (toPlan(input.steps)) await update($, issue, i => (i ? { ...i, plan: toPlan(input.steps) } : i))
         if (input.text) await update($, steps, list => [...list, { text: input.text ?? '', at }].slice(-200))
         break
       case 'issue_done':
@@ -355,15 +308,18 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The band on an 80-column terminal. The run's mode tints it: border, issue id, the issue in
-  // progress on the bar and the phase in progress take autoAccept on an auto run, claude attended.
+  // The band on an 80-column terminal, in Claude Code's own accent so it sits with the rest of the
+  // interface in any theme. Auto mode is the one purple thing, as Claude Code marks its own.
+  // Widths come from the layout, not from counting characters: the desktop draws a proportional
+  // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
   // │  ▰ Ship: Project Cell                               auto on    run 4m 18s  │
   // │  Milestone: M2.5   Organic world                               ✓ 3   ✗ 0   │
-  // │  ━━━━ ━━━━ ━━━━ ━━━━ ──── ──── ──── ──── ──── ──── ──── ────     4 / 12    │
+  // │  ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████     4 / 12    │
   // │                                                                            │
   // │  ▶ TEC-91  [M]  Cell inspector panel with live gene readout  issue 1m 48s  │
-  // │     ✓ plan ━━ ● ui ── ○ verify ── ○ commit     » ui wire gene readout      │
+  // │     ✓ plan ━━ ● work ── ○ verify ── ○ commit                               │
+  // │     » ui wire gene readout                                                 │
   // │                                                                            │
   // │  agents 2/5   tools 9   files 3   commits 1   last ✓ TEC-90 50s   22k tok  │
   // ╰────────────────────────────────────────────────────────────────────────────╯
@@ -383,16 +339,17 @@ export const register: Register = on => {
     const badCount = done.length - okCount
     const last = done.at(-1)
     const total = runNow.total
-    const tint = runNow.isAuto ? 'autoAccept' : 'claude'
-    // Border and padding take 6 cells.
+    const tint = 'claude'
+    // Border and padding take 6 cells. An estimate on the desktop, used only to choose what shows.
     const inner = e.props.bodyColumns - 6
-    // Full height is 10 rows. A short slot (fullscreen on a small terminal) drops the blank
+    // Full height is 11 rows. A short slot (fullscreen on a small terminal) drops the blank
     // rows, then the footer, rather than scroll.
-    const hasGaps = !(e.props.maxRows < 10)
-    const hasFooter = !(e.props.maxRows < 8)
+    const hasGaps = !(e.props.maxRows < 11)
+    const hasFooter = !(e.props.maxRows < 9)
     const gap = () => (hasGaps ? <Text> </Text> : null)
-    // Fixed segments never shrink; only free text (project, scope, title, step) truncates.
+    // Fixed segments never shrink; `fit` holds what may give way and clips it.
     const fixed = (...nodes: unknown[]) => <Box flexShrink={0}>{nodes}</Box>
+    const fit = (...nodes: unknown[]) => <Box flexShrink={1} overflow="hidden">{nodes}</Box>
     // Dim label, plain value: both timers, right-aligned.
     const stat = (label: string, value: string) => fixed(<Text color="subtle">{'   '}{label} </Text>, <Text>{value}</Text>)
 
@@ -423,18 +380,20 @@ export const register: Register = on => {
       </Box>
     )
 
-    // The bar takes the row less the count, sized for the worst case so it does not jitter as
-    // digits change, plus 1 cell of slack for wide glyphs. Below 6 cells only the count shows.
-    const countLen = total ? `   ${total} / ${total}`.length : '   scoping…'.length
-    const fit = inner - countLen - 1
-    const width = fit >= 6 ? fit : 0
+    // Solid blocks a full row high, each growing by the issues it stands for, so the bar fills
+    // what the count leaves on any surface. Gaps split the issues while each keeps about 3 cells.
     const BAR_TONE = { ok: 'success', bad: 'warning', now: tint, todo: 'subtle' } as const
-    const parts = total
-      ? runBar(done.map(one => one.isDone), !!current, total, width)
-      : [{ text: '─'.repeat(width), tone: 'todo' as const }]
+    const split = !!total && total * 3 <= inner
+    const blocks = total ? runBar(done.map(one => one.isDone), !!current, total, split) : [{ tone: 'todo' as const, count: 1 }]
     const progress = (
-      <Box justifyContent="space-between">
-        {fixed(...parts.map((one, i) => (one.text ? <Text key={`b${i}`} color={BAR_TONE[one.tone]} bold={one.tone === 'now'}>{one.text}</Text> : null)))}
+      <Box>
+        <Box flexGrow={1} flexShrink={1} overflow="hidden">
+          {blocks.map((one, i) => (
+            <Box key={`b${i}`} width={0} flexGrow={one.count} flexShrink={1} marginLeft={split && i ? 1 : 0} backgroundColor={BAR_TONE[one.tone]}>
+              <Text> </Text>
+            </Box>
+          ))}
+        </Box>
         {fixed(
           total
             ? <Text bold>{'   '}{done.length} / {total}</Text>
@@ -458,49 +417,31 @@ export const register: Register = on => {
       <Text color="subtle" italic wrap="truncate-end">picking the next issue…</Text>
     )
 
-    // Same row in both states, so the band keeps its height between issues. Too many steps for the
-    // row: the done ones fold into "n done", then the ones to come into "n more"; the current step
-    // always shows. The reported step shows while it keeps 12 cells, unless it only names the
-    // current step. A link turns solid once its phase is reached.
-    const stages = phases(current ? list : [], current?.kind, current?.plan)
-    const stepperLen = (items: readonly { name: string }[]) => 3 + items.reduce((n, one, i) => n + (i ? 4 : 0) + 2 + one.name.length, 0)
-    const reach = stages.findIndex(one => one.state === 'now' || one.state === 'todo' || one.state === 'seen')
-    const head = reach < 0 ? stages.length - 1 : reach
-    const fold = (doneCount: number, moreCount: number) => [
-      ...(doneCount ? [{ name: `${doneCount} done`, state: 'done' as const }] : []),
-      ...stages.slice(doneCount, stages.length - moreCount),
-      ...(moreCount ? [{ name: `${moreCount} more`, state: 'todo' as const }] : []),
-    ]
-    let [folded, later] = [0, 0]
-    while (stepperLen(fold(folded, later)) > inner) {
-      if (folded < head) folded++
-      else if (later < stages.length - head - 1) later++
-      else break
-    }
-    const shown = fold(folded, later)
-    const stepNow = current ? list.findLast(one => !one.auto)?.text.trim() ?? '' : ''
-    const nowName = stages.find(one => one.state === 'now')?.name.toLowerCase()
-    const hasStep = !!stepNow && stepNow.toLowerCase() !== nowName && inner - stepperLen(shown) - 5 >= 12
-    const phaseRow = (
-      <Box>
-        {fixed(
-          <Text>{'   '}</Text>,
-          ...shown.flatMap((one, i) => [
-            !i ? null : one.state === 'done' || one.state === 'now' ? (
-              <Text key={`to${i}`} color="success"> ━━ </Text>
-            ) : (
-              <Text key={`to${i}`} color="subtle"> ── </Text>
-            ),
-            <Text key={`at${i}`} color={one.state === 'now' ? tint : TONE[one.state]} bold={one.state === 'now'}>
-              {GLYPH[one.state]} {one.name}
-            </Text>,
-          ]),
-        )}
-        {hasStep ? <Text color="subtle" italic wrap="truncate-end">{'     '}» {stepNow}</Text> : null}
-      </Box>
+    // Same rows in both states, so the band keeps its height between issues. A link turns solid
+    // once its phase is reached. The reported step goes on its own row, less the phase word it
+    // starts with; a blank row holds the place when there is nothing more to say.
+    const stages = phases(current ? list : [], current?.kind)
+    const phaseRow = fit(
+      fixed(
+        <Text>{'   '}</Text>,
+        ...stages.flatMap((one, i) => [
+          !i ? null : one.state === 'done' || one.state === 'now' ? (
+            <Text key={`to${i}`} color="success"> ━━ </Text>
+          ) : (
+            <Text key={`to${i}`} color="subtle"> ── </Text>
+          ),
+          <Text key={`at${i}`} color={one.state === 'now' ? tint : TONE[one.state]} bold={one.state === 'now'}>
+            {GLYPH[one.state]} {one.name}
+          </Text>,
+        ]),
+      ),
     )
+    const stepNow = current ? list.findLast(one => !one.auto)?.text.trim() ?? '' : ''
+    const detail = stepDetail(stepNow, stages.find(one => one.state === 'now')?.name)
+    const stepRow = <Text color="subtle" italic wrap="truncate-end">{detail ? `     » ${detail}` : ' '}</Text>
 
     // Stats, then the last result, show whole or not at all, so the footer never ends in a stub.
+    // The counts are a terminal estimate; on the desktop the group also clips before the tokens.
     const agentsText = `agents ${live.length}/${MAX_AGENTS}`
     const statsText = current ? `   tools ${w.tools}   files ${w.files.length}   commits ${w.commits}` : ''
     const lastText = last ? `   last ${last.isDone ? '✓' : '✗'} ${last.id} ${dur(last.ms)}` : ''
@@ -510,10 +451,12 @@ export const register: Register = on => {
     const hasLast = lastText.length <= room - (hasStats ? statsText.length : 0)
     const footer = hasFooter ? (
       <Box justifyContent="space-between">
-        {fixed(
-          <Text color={live.length >= MAX_AGENTS ? 'warning' : live.length ? tint : 'subtle'}>{agentsText}</Text>,
-          statsText && hasStats ? <Text color="subtle">{statsText}</Text> : null,
-          last && hasLast ? <Text color={last.isDone ? 'success' : 'warning'}>{lastText}</Text> : null,
+        {fit(
+          fixed(
+            <Text color={live.length >= MAX_AGENTS ? 'warning' : live.length ? tint : 'subtle'}>{agentsText}</Text>,
+            statsText && hasStats ? <Text color="subtle">{statsText}</Text> : null,
+            last && hasLast ? <Text color={last.isDone ? 'success' : 'warning'}>{lastText}</Text> : null,
+          ),
         )}
         {fixed(<Text color="subtle">{tokText}</Text>)}
       </Box>
@@ -527,6 +470,7 @@ export const register: Register = on => {
         {gap()}
         {issueRow}
         {phaseRow}
+        {stepRow}
         {footer ? gap() : null}
         {footer}
       </Box>
