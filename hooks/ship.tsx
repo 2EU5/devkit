@@ -315,13 +315,12 @@ export const register: Register = on => {
   // Widths come from the layout, not from counting characters: the desktop draws a proportional
   // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
-  // │  Project Cell  M2.5 Organic world                              auto on   4 / 12  │
-  // │  ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ │
-  // │  TEC-91  [M]  Cell inspector panel with live gene readout    issue 1m 48s  │
+  // │  Project Cell  M2.5 Organic world                       issue 1m 48s   4 / 12  │
+  // │  TEC-91  [M]  Cell inspector panel with live gene readout                  │
   // │     ◉ plan ━━ ◉ work ── ○ verify ── ○ commit                               │
   // │     » ui wire gene readout                                                 │
-  // │                                                                            │
-  // │  agents 2/5   tools 9   files 3   commits 1   last ✓ TEC-90 50s   run 4m 18s  22k tok │
+  // │  ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ │
+  // │  agents 2/5   tools 9   files 3   commits 1         run 4m 18s   22k tok   auto on  │
   // ╰────────────────────────────────────────────────────────────────────────────╯
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const runNow = await read($, run)
@@ -346,12 +345,9 @@ export const register: Register = on => {
     const stages = phases(current ? list : [], current?.kind)
     const stepNow = current ? list.findLast(one => !one.auto)?.text.trim() ?? '' : ''
     const detail = stepDetail(stepNow, stages.find(one => one.state === 'now')?.name)
-    // Full height is 8 rows, 9 with the step row. A short slot (fullscreen on a small terminal)
-    // drops the blank row, then the footer, rather than scroll.
-    const rows = detail ? 9 : 8
-    const hasGaps = !(e.props.maxRows < rows)
-    const hasFooter = !(e.props.maxRows < rows - 1)
-    const gap = () => (hasGaps ? <Text> </Text> : null)
+    // Full height is 7 rows, 8 with the step row. A short slot (fullscreen on a small terminal)
+    // drops the footer rather than scroll.
+    const hasFooter = !(e.props.maxRows < (detail ? 8 : 7))
     // Fixed segments never shrink; `fit` holds what may give way and clips it.
     const fixed = (...nodes: unknown[]) => <Box flexShrink={0}>{nodes}</Box>
     const fit = (...nodes: unknown[]) => <Box flexShrink={1} overflow="hidden">{nodes}</Box>
@@ -361,8 +357,8 @@ export const register: Register = on => {
     // Auto on is the loud state: nobody is there to answer, so it reads from across the room.
     const mode = runNow.isAuto ? <Text color="autoAccept" inverse bold> auto on </Text> : <Text color="subtle">auto off</Text>
     // Where the run is and how far along: project bold, milestone dim (the issue title is the
-    // brightest line in the band; the milestone name gives way first), then mode and the count
-    // over the end of the bar it describes. Needs input shows only once something needs it.
+    // brightest line in the band; the milestone name gives way first), then the issue's time and
+    // the count. Needs input shows only once something needs it.
     const [scopeId, scopeName] = splitScope(runNow.scope)
     const header = (
       <Box justifyContent="space-between">
@@ -374,8 +370,7 @@ export const register: Register = on => {
           <Text color="subtle" wrap="truncate-end">{scopeName}</Text>
         </Box>
         {fixed(
-          <Text>{'   '}</Text>,
-          mode,
+          current ? stat('issue', dur(at - current.startedAt)) : null,
           badCount ? <Text color="warning">{'   '}{badCount} needs input</Text> : null,
           total ? <Text bold>{'   '}{done.length} / {total}</Text> : <Text color="subtle" italic>{'   '}scoping…</Text>,
         )}
@@ -407,16 +402,10 @@ export const register: Register = on => {
       </Box>
     )
 
-    // The issue timer (sized for 59m 59s) shows only while the title keeps 16 cells.
-    const idLen = current ? `${current.id}  [${current.size ?? '?'}]  `.length : 0
-    const hasIssueTime = !!current && inner - idLen - '   issue 59m 59s'.length >= 16
     const issueRow = current ? (
-      <Box justifyContent="space-between">
-        <Box flexShrink={1}>
-          {fixed(<Text color={tint} bold>{current.id}</Text>, <Text color="subtle">{'  '}[{current.size ?? '?'}]{'  '}</Text>)}
-          <Text wrap="truncate-end">{current.title}</Text>
-        </Box>
-        {hasIssueTime ? stat('issue', dur(at - current.startedAt)) : null}
+      <Box>
+        {fixed(<Text color={tint} bold>{current.id}</Text>, <Text color="subtle">{'  '}[{current.size ?? '?'}]{'  '}</Text>)}
+        <Text wrap="truncate-end">{current.title}</Text>
       </Box>
     ) : (
       <Text color="subtle" italic wrap="truncate-end">picking the next issue…</Text>
@@ -442,13 +431,15 @@ export const register: Register = on => {
     const stepRow = detail ? <Text color="subtle" italic wrap="truncate-end">{`     » ${detail}`}</Text> : null
 
     // Stats, then the last result, show whole or not at all, so the footer never ends in a stub.
-    // The counts are a terminal estimate; on the desktop the group also clips before the tokens.
+    // The counts are a terminal estimate; on the desktop the group also clips before the run time,
+    // tokens and mode, which end the footer.
     const agentsText = `agents ${live.length}/${MAX_AGENTS}`
     const statsText = current ? `   tools ${w.tools}   files ${w.files.length}   commits ${w.commits}` : ''
     const lastText = last ? `   last ${last.isDone ? '✓' : '✗'} ${last.id} ${dur(last.ms)}` : ''
     const runText = `   run ${dur(at - runNow.startedAt)}`
     const tokText = `   ${fmtTokens(runNow.tokens)} tok`
-    const room = inner - agentsText.length - runText.length - tokText.length
+    const modeText = runNow.isAuto ? '    auto on ' : '   auto off'
+    const room = inner - agentsText.length - runText.length - tokText.length - modeText.length
     const hasStats = statsText.length <= room
     const hasLast = lastText.length <= room - (hasStats ? statsText.length : 0)
     const footer = hasFooter ? (
@@ -460,18 +451,17 @@ export const register: Register = on => {
             last && hasLast ? <Text color={last.isDone ? 'success' : 'warning'}>{lastText}</Text> : null,
           ),
         )}
-        {fixed(stat('run', dur(at - runNow.startedAt)), <Text color="subtle">{tokText}</Text>)}
+        {fixed(stat('run', dur(at - runNow.startedAt)), <Text color="subtle">{tokText}{'   '}</Text>, mode)}
       </Box>
     ) : null
 
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="promptBorder" paddingX={2}>
         {header}
-        {barRow}
         {issueRow}
         {phaseRow}
         {stepRow}
-        {footer ? gap() : null}
+        {barRow}
         {footer}
       </Box>
     )
