@@ -35,6 +35,7 @@ type StatusInput = {
   text?: string
   total?: number
   project?: string
+  auto?: boolean
 }
 
 // council, audit and code-review (reported as audit) may run their own subagents beyond the cap (skill rule 12).
@@ -70,12 +71,35 @@ export const splitScope = (scope: string): readonly [string, string] => {
   return hit?.[1] && hit[2] && hit[1].length <= 12 ? [hit[1], hit[2]] : ['', scope]
 }
 
-// Smooth bar with eighth-block tips: ratio 0..1 (clamped) over `width` cells.
-export const bar = (ratio: number, width: number) => {
-  const eighths = Math.round(Math.min(1, Math.max(0, ratio)) * width * 8)
-  const full = Math.floor(eighths / 8)
-  const tip = eighths % 8 ? '▏▎▍▌▋▊▉'[(eighths % 8) - 1] : ''
-  return { filled: '█'.repeat(full) + tip, empty: '░'.repeat(width - full - (tip ? 1 : 0)) }
+// Run bar over `width` cells, one tone per issue in queue order: done, needs input, the one in
+// progress, then the rest. Issues that fit at 2+ cells each get their own segment with a gap;
+// a longer queue maps cells onto issues proportionally. Heavy fill on a light track, so it reads
+// without colour too. Returns runs of same-tone text.
+export type BarTone = 'ok' | 'bad' | 'now' | 'todo'
+export const runBar = (done: readonly boolean[], hasCurrent: boolean, total: number, width: number) => {
+  const n = Math.max(total, done.length + (hasCurrent ? 1 : 0))
+  const toneOf = (i: number): BarTone =>
+    i < done.length ? (done[i] ? 'ok' : 'bad') : i === done.length && hasCurrent ? 'now' : 'todo'
+  const glyph = (tone: BarTone) => (tone === 'todo' ? '─' : '━')
+  const seg = n ? Math.floor((width + 1) / n) - 1 : 0
+  const cells: [string, BarTone][] = !n || width < 1
+    ? []
+    : seg >= 2
+      ? Array.from({ length: n }, (_, i) => toneOf(i)).flatMap((tone, i) => [
+          ...(i ? [[' ', tone] as [string, BarTone]] : []),
+          ...Array.from({ length: seg }, () => [glyph(tone), tone] as [string, BarTone]),
+        ])
+      : Array.from({ length: width }, (_, c) => {
+          const tone = toneOf(Math.floor((c * n) / width))
+          return [glyph(tone), tone]
+        })
+  const parts: { text: string; tone: BarTone }[] = []
+  for (const [text, tone] of cells) {
+    const prev = parts.at(-1)
+    if (prev?.tone === tone) prev.text += text
+    else parts.push({ text, tone })
+  }
+  return parts
 }
 
 // Phase tracker: plan, the issue's kind, verify, commit. A step starting with a phase word
@@ -138,6 +162,7 @@ export const register: Register = on => {
           },
           total: { type: 'number', description: 'any action: issues in scope (updated as sub-issues are added)' },
           project: { type: 'string', description: 'run_start: Linear project name' },
+          auto: { type: 'boolean', description: 'run_start: true in auto mode (/studio:ship auto), false when attended' },
         },
         required: ['action'],
       },
@@ -172,7 +197,7 @@ export const register: Register = on => {
         const cwd = input.project ? '' : await $.session.cwd().catch(() => '')
         const project = input.project || (cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? '')
         await update($, isRunning, () => true)
-        await update($, run, () => ({ project, scope: input.text ?? '', startedAt: at, lastAt: at, total: input.total, tokens: 0 }) satisfies Run)
+        await update($, run, () => ({ project, scope: input.text ?? '', startedAt: at, lastAt: at, total: input.total, tokens: 0, isAuto: input.auto === true }) satisfies Run)
         await update($, issue, () => null)
         await update($, agents, list => list.filter(one => one.status === 'running'))
         await update($, steps, () => [])
@@ -284,16 +309,18 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The band on an 80-column terminal:
-  // ╭─────────────────────────────────────────────────────────────────────────╮
-  // │ ◆ SHIP · Project Cell                                   run 4m 18s │
-  // │ M2.5 Organic world                           ███▉░░░░░░░░░░ 3/11  ✓3 ✗0 │
-  // │ ─────────────────────────────────────────────────────────────────────── │
-  // │ ▶ TEC-91 [M] Cell inspector panel with live gene readout                │
-  // │   ✓ plan ── ● ui ── ○ verify ── ○ commit   » ui wire gen…  issue 1m 48s │
-  // │ ─────────────────────────────────────────────────────────────────────── │
-  // │ agents 2/5 · tools 9 · files 3 · commits 1 · last ✓ TEC-90 50s  22k tok │
-  // ╰─────────────────────────────────────────────────────────────────────────╯
+  // The band on an 80-column terminal. The run's mode tints it: border, issue id, the issue in
+  // progress on the bar and the phase in progress take autoAccept on an auto run, claude attended.
+  // ╭────────────────────────────────────────────────────────────────────────────╮
+  // │  ▰ Ship: Project Cell                               auto on    run 4m 18s  │
+  // │  Milestone: M2.5   Organic world                               ✓ 3   ✗ 0   │
+  // │  ━━━━ ━━━━ ━━━━ ━━━━ ──── ──── ──── ──── ──── ──── ──── ────     4 / 12    │
+  // │                                                                            │
+  // │  ▶ TEC-91  [M]  Cell inspector panel with live gene readout  issue 1m 48s  │
+  // │     ✓ plan ━━ ● ui ── ○ verify ── ○ commit     » ui wire gene readout      │
+  // │                                                                            │
+  // │  agents 2/5   tools 9   files 3   commits 1   last ✓ TEC-90 50s   22k tok  │
+  // ╰────────────────────────────────────────────────────────────────────────────╯
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const runNow = await read($, run)
     if (e.props.hasSurvey || !runNow || !(await read($, isRunning))) {
@@ -310,99 +337,118 @@ export const register: Register = on => {
     const badCount = done.length - okCount
     const last = done.at(-1)
     const total = runNow.total
-    // Border and padding take 4 cells.
-    const inner = e.props.bodyColumns - 4
-    // Full height is 9 rows. A short slot (fullscreen on a small terminal) drops the rules,
-    // then the footer, rather than scroll.
-    const hasRules = !(e.props.maxRows < 9)
-    const hasFooter = !(e.props.maxRows < 7)
+    const tint = runNow.isAuto ? 'autoAccept' : 'claude'
+    // Border and padding take 6 cells.
+    const inner = e.props.bodyColumns - 6
+    // Full height is 10 rows. A short slot (fullscreen on a small terminal) drops the blank
+    // rows, then the footer, rather than scroll.
+    const hasGaps = !(e.props.maxRows < 10)
+    const hasFooter = !(e.props.maxRows < 8)
+    const gap = () => (hasGaps ? <Text> </Text> : null)
     // Fixed segments never shrink; only free text (project, scope, title, step) truncates.
     const fixed = (...nodes: unknown[]) => <Box flexShrink={0}>{nodes}</Box>
     // Dim label, plain value: both timers, right-aligned.
-    const stat = (label: string, value: string) => fixed(<Text color="subtle">{'  '}{label} </Text>, <Text>{value}</Text>)
-    const rule = () => (hasRules ? <Text color="subtle" wrap="truncate-end">{'─'.repeat(Math.max(0, inner))}</Text> : null)
+    const stat = (label: string, value: string) => fixed(<Text color="subtle">{'   '}{label} </Text>, <Text>{value}</Text>)
 
+    // Auto on is the loud state: nobody is there to answer, so it reads from across the room.
+    const mode = runNow.isAuto ? <Text color="autoAccept" inverse bold> auto on </Text> : <Text color="subtle">auto off</Text>
     const header = (
       <Box justifyContent="space-between">
         <Box flexShrink={1}>
-          {fixed(<Text color="claude" bold>◆ SHIP</Text>, runNow.project ? <Text color="subtle"> · </Text> : null)}
+          {fixed(<Text color={tint} bold>{runNow.project ? '▰ Ship: ' : '▰ Ship'}</Text>)}
           {runNow.project ? <Text bold wrap="truncate-end">{runNow.project}</Text> : null}
         </Box>
-        {stat('run', dur(at - runNow.startedAt))}
+        {fixed(<Text>{'   '}</Text>, mode, stat('run', dur(at - runNow.startedAt)))}
       </Box>
     )
 
-    // Sized against worst-case counts so the bar does not jitter as digits change; the scope
-    // keeps up to 24 cells before the bar gives way. 2-cell gap plus 1 cell of slack for wide glyphs.
     const [scopeId, scopeName] = splitScope(runNow.scope)
-    const countsLen = (total ? ` ${total}/${total}`.length : 'scoping…'.length) + `  ✓${total ?? 99} ✗${total ?? 99}`.length
-    const fit = Math.min(14, inner - 3 - Math.min(runNow.scope.length, 24) - countsLen)
-    const width = total && fit >= 6 ? fit : 0
-    const b = bar(total ? done.length / total : 0, width)
     const milestone = (
       <Box justifyContent="space-between">
         <Box flexShrink={1}>
-          {scopeId ? fixed(<Text color="subtle">{scopeId} </Text>) : null}
+          {runNow.scope ? fixed(<Text color="subtle">Milestone: </Text>) : null}
+          {scopeId ? fixed(<Text color="subtle">{scopeId}{'   '}</Text>) : null}
           <Text wrap="truncate-end">{scopeName}</Text>
         </Box>
         {fixed(
-          <Text>{'  '}</Text>,
-          b.filled ? <Text color="claude">{b.filled}</Text> : null,
-          b.empty ? <Text color="subtle">{b.empty}</Text> : null,
-          total ? <Text bold>{width ? ' ' : ''}{done.length}/{total}</Text> : <Text color="subtle" italic>scoping…</Text>,
-          <Text color={okCount ? 'success' : 'subtle'}>{'  '}✓{okCount}</Text>,
-          <Text color={badCount ? 'warning' : 'subtle'}> ✗{badCount}</Text>,
+          <Text color={okCount ? 'success' : 'subtle'}>{'   '}✓ {okCount}</Text>,
+          <Text color={badCount ? 'warning' : 'subtle'}>{'   '}✗ {badCount}</Text>,
         )}
       </Box>
     )
 
+    // The bar takes the row less the count, sized for the worst case so it does not jitter as
+    // digits change, plus 1 cell of slack for wide glyphs. Below 6 cells only the count shows.
+    const countLen = total ? `   ${total} / ${total}`.length : '   scoping…'.length
+    const fit = inner - countLen - 1
+    const width = fit >= 6 ? fit : 0
+    const BAR_TONE = { ok: 'success', bad: 'warning', now: tint, todo: 'subtle' } as const
+    const parts = total
+      ? runBar(done.map(one => one.isDone), !!current, total, width)
+      : [{ text: '─'.repeat(width), tone: 'todo' as const }]
+    const progress = (
+      <Box justifyContent="space-between">
+        {fixed(...parts.map((one, i) => (one.text ? <Text key={`b${i}`} color={BAR_TONE[one.tone]} bold={one.tone === 'now'}>{one.text}</Text> : null)))}
+        {fixed(
+          total
+            ? <Text bold>{'   '}{done.length} / {total}</Text>
+            : <Text color="subtle" italic>{'   '}scoping…</Text>,
+        )}
+      </Box>
+    )
+
+    // The issue timer (sized for 59m 59s) shows only while the title keeps 16 cells.
+    const idLen = current ? `▶ ${current.id}  [${current.size ?? '?'}]  `.length : 0
+    const hasIssueTime = !!current && inner - idLen - '   issue 59m 59s'.length >= 16
     const issueRow = current ? (
-      <Box>
-        {fixed(<Text color="claude" bold>▶ {current.id}</Text>, <Text color="subtle"> [{current.size ?? '?'}] </Text>)}
-        <Text wrap="truncate-end">{current.title}</Text>
+      <Box justifyContent="space-between">
+        <Box flexShrink={1}>
+          {fixed(<Text color={tint} bold>▶ {current.id}</Text>, <Text color="subtle">{'  '}[{current.size ?? '?'}]{'  '}</Text>)}
+          <Text wrap="truncate-end">{current.title}</Text>
+        </Box>
+        {hasIssueTime ? stat('issue', dur(at - current.startedAt)) : null}
       </Box>
     ) : (
-      <Text color="subtle" italic wrap="truncate-end">… picking next issue</Text>
+      <Text color="subtle" italic wrap="truncate-end">picking the next issue…</Text>
     )
 
     // Same row in both states, so the band keeps its height between issues. The stepper never
-    // shrinks; on a narrow row the issue timer (sized for 59m 59s) gives way, then the step.
+    // shrinks; the step shows while it keeps 12 cells. A link turns solid once its phase is reached.
     const stages = phases(current ? list : [], current?.kind)
     const stepNow = current ? list.at(-1)?.text ?? '' : ''
-    const stepperLen = 2 + stages.reduce((n, one, i) => n + (i ? 4 : 0) + 2 + one.name.length, 0)
-    const issueTimeLen = '  issue 59m 59s'.length
-    const hasIssueTime = !!current && inner >= stepperLen + issueTimeLen
-    const hasStep = !!stepNow && inner - stepperLen - (hasIssueTime ? issueTimeLen : 0) >= 12
+    const stepperLen = 3 + stages.reduce((n, one, i) => n + (i ? 4 : 0) + 2 + one.name.length, 0)
+    const hasStep = !!stepNow && inner - stepperLen - 5 >= 12
     const phaseRow = (
-      <Box justifyContent="space-between">
-        <Box flexShrink={1}>
-          {fixed(
-            <Text>{'  '}</Text>,
-            ...stages.flatMap((one, i) => [
-              i ? <Text key={`to${i}`} color="subtle"> ── </Text> : null,
-              <Text key={`at${i}`} color={TONE[one.state]} bold={one.state === 'now'}>
-                {GLYPH[one.state]} {one.name}
-              </Text>,
-            ]),
-          )}
-          {hasStep ? <Text color="subtle" italic wrap="truncate-end">{'   '}» {stepNow}</Text> : null}
-        </Box>
-        {current && hasIssueTime ? stat('issue', dur(at - current.startedAt)) : null}
+      <Box>
+        {fixed(
+          <Text>{'   '}</Text>,
+          ...stages.flatMap((one, i) => [
+            !i ? null : one.state === 'done' || one.state === 'now' ? (
+              <Text key={`to${i}`} color="success"> ━━ </Text>
+            ) : (
+              <Text key={`to${i}`} color="subtle"> ── </Text>
+            ),
+            <Text key={`at${i}`} color={one.state === 'now' ? tint : TONE[one.state]} bold={one.state === 'now'}>
+              {GLYPH[one.state]} {one.name}
+            </Text>,
+          ]),
+        )}
+        {hasStep ? <Text color="subtle" italic wrap="truncate-end">{'     '}» {stepNow}</Text> : null}
       </Box>
     )
 
     // Stats, then the last result, show whole or not at all, so the footer never ends in a stub.
     const agentsText = `agents ${live.length}/${MAX_AGENTS}`
-    const statsText = current ? ` · tools ${w.tools} · files ${w.files.length} · commits ${w.commits}` : ''
-    const lastText = last ? ` · last ${last.isDone ? '✓' : '✗'} ${last.id} ${dur(last.ms)}` : ''
-    const tokText = `  ${fmtTokens(runNow.tokens)} tok`
+    const statsText = current ? `   tools ${w.tools}   files ${w.files.length}   commits ${w.commits}` : ''
+    const lastText = last ? `   last ${last.isDone ? '✓' : '✗'} ${last.id} ${dur(last.ms)}` : ''
+    const tokText = `   ${fmtTokens(runNow.tokens)} tok`
     const room = inner - agentsText.length - tokText.length
     const hasStats = statsText.length <= room
     const hasLast = lastText.length <= room - (hasStats ? statsText.length : 0)
     const footer = hasFooter ? (
       <Box justifyContent="space-between">
         {fixed(
-          <Text color={live.length >= MAX_AGENTS ? 'warning' : live.length ? 'claude' : 'subtle'}>{agentsText}</Text>,
+          <Text color={live.length >= MAX_AGENTS ? 'warning' : live.length ? tint : 'subtle'}>{agentsText}</Text>,
           statsText && hasStats ? <Text color="subtle">{statsText}</Text> : null,
           last && hasLast ? <Text color={last.isDone ? 'success' : 'warning'}>{lastText}</Text> : null,
         )}
@@ -411,13 +457,14 @@ export const register: Register = on => {
     ) : null
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
+      <Box flexDirection="column" borderStyle="round" borderColor={tint} paddingX={2}>
         {header}
         {milestone}
-        {rule()}
+        {progress}
+        {gap()}
         {issueRow}
         {phaseRow}
-        {footer ? rule() : null}
+        {footer ? gap() : null}
         {footer}
       </Box>
     )

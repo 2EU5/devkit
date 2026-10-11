@@ -60,13 +60,13 @@ After preflight, before `run_start`. Runs when `digest` argument given, or no ta
     - `studio:digest`: L/XL split (rules 6, 11), split mode.
     - `code-review`: large or risky change: review diff before commit. Fix in-scope findings. Out-of-scope findings: comment on issue.
 14. **Progress:** Report to `mcp__studio__status` (tool missing: skip).
-    - `run_start`: once, after preflight. `project` = Linear project name. `text` = milestone of first issue (e.g. `M2.5 · Organic world`). `total` = all top-level queue issues at run start.
+    - `run_start`: once, after preflight. `project` = Linear project name. `text` = milestone of first issue (e.g. `M2.5 · Organic world`). `total` = all top-level queue issues at run start. `auto` = true in auto mode, false attended.
     - `issue_start`: issue, title, size, kind. Kind: one word for issue's main work, from labels or content: `code`, `ui`, `model`, `art`; none fits: own short word. Issue in another milestone: `text` = that milestone. Sub-issues added: send updated `total`. Issue not counted at run start (e.g. new bug): send `total` + 1.
     - Sub-issues get own `issue_start` / `issue_done`. Split parent gets `issue_done` once all sub-issues done.
     - `step`: short text on each phase change. Start with phase word (plan, issue kind, verify, commit) so band phase tracker advances. While `council` or `audit` runs, text starts with that word (`audit` also for `code-review`). After they finish, report next phase step before spawning subagents.
     - `issue_done` / `issue_abort`: one-line reason.
     - `run_end`: before final summary, on every exit path (scope done, stop, error).
-    - Resumed after interrupt or error (band gone): send `run_start` again, same project, current milestone, `total` = issues left.
+    - Resumed after interrupt or error (band gone): send `run_start` again, same project, current milestone, same `auto`, `total` = issues left.
 
 ## Before commit, branch switch, reset or rebase
 
