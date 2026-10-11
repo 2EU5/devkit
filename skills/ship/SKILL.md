@@ -63,10 +63,10 @@ After preflight, before `run_start`. Runs when `digest` argument given, or no ta
     - `run_start`: once, after preflight. `project` = Linear project name. `text` = milestone of first issue (e.g. `M2.5 · Organic world`). `total` = all top-level queue issues at run start. `auto` = true in auto mode, false attended.
     - `issue_start`: issue, title, size, kind. Kind: one word for issue's main work, from labels or content: `code`, `ui`, `model`, `art`; none fits: own short word. Issue in another milestone: `text` = that milestone. Sub-issues added: send updated `total`. Issue not counted at run start (e.g. new bug): send `total` + 1.
     - Sub-issues get own `issue_start` / `issue_done`. Split parent gets `issue_done` once all sub-issues done.
-    - `step`: short text on each phase change. Start with phase word (plan, issue kind or `work`, verify, commit) so band tracker advances; rest of text shows under tracker. Band also advances by itself on edits, verify and commits; still report each step. While `council` or `audit` runs, text starts with that word (`audit` also for `code-review`). After they finish, report next phase step before spawning subagents.
+    - `step`: short text on each phase change. Include `issue`. Start with phase word (plan, issue kind or `work`, verify, commit) so band tracker advances; rest of text shows under tracker. Band also advances by itself on edits, verify and commits; still report each step. While `council` or `audit` runs, text starts with that word (`audit` also for `code-review`). After they finish, report next phase step before spawning subagents.
     - `issue_done` / `issue_abort`: one-line reason.
     - `run_end`: before final summary, on every exit path (scope done, stop, error).
-    - Resumed after interrupt or error (band gone): send `run_start` again, same project, current milestone, same `auto`, `total` = issues left.
+    - Resumed after interrupt or error (band gone): send `run_start` again, same project, current milestone, same `auto`, `total` = issues left. Mid-issue: then `issue_start` for that issue (same fields) and `step` for its current phase, so band tracker shows where work stands.
 
 ## Before commit, branch switch, reset or rebase
 

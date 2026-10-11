@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRow, AutoMark, IssueResult, Run, Size, StepEntry, Work } from '../types'
+import type { AgentRow, AutoMark, IssueResult, Run, Size, StepEntry } from '../types'
 
 // Live view of an /studio:ship run: a bordered band above the prompt, toasts, and the
 // skill's rule 12 cap (max 5 concurrent subagents) enforced at spawn.
@@ -10,7 +10,6 @@ const TOOL = 'mcp__studio__status'
 const MAX_AGENTS = 5
 // A step starting with the issue's kind (code, ui, model, art, …) or any of these words enters work.
 const WORK_WORDS = ['build', 'code', 'ui', 'model', 'art']
-const NO_WORK: Work = { tools: 0, files: [], commits: 0 }
 // No status call for longer than the XL limit plus slack: the run died without run_end.
 const STALE_MS = 4.5 * 60 * 60_000
 const TEST_RUN = /run_?tests?|tests?_?run/i
@@ -22,7 +21,6 @@ const agents = atom({ plugin: 'studio', key: 'agents' } as const, [])
 const now = atom({ plugin: 'studio', key: 'now' } as const, 0)
 const run = atom({ plugin: 'studio', key: 'run' } as const, null)
 const steps = atom({ plugin: 'studio', key: 'steps' } as const, [])
-const work = atom({ plugin: 'studio', key: 'work' } as const, NO_WORK)
 const results = atom({ plugin: 'studio', key: 'results' } as const, [])
 
 type StatusInput = {
@@ -47,9 +45,6 @@ export const isSubagentBanned = (tool: string, command = '') =>
   /(?:^|_)unity/i.test(tool) || /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:git|unity)\b/.test(command)
 // A step starts with a phase word as a whole word: "plan" yes, "planet" no.
 const startsWord = (text: string, word: string) => text === word || new RegExp(`^${word}\\b`).test(text)
-
-export const fmtTokens = (n: number) =>
-  n < 1000 ? `${n}` : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1)}M`
 
 // Elapsed time, one format for every timer on the band: 48s, 4m 12s, 1h 04m.
 export const dur = (ms: number) => {
@@ -194,20 +189,24 @@ export const register: Register = on => {
         const cwd = input.project ? '' : await $.session.cwd().catch(() => '')
         const project = input.project || (cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? '')
         await update($, isRunning, () => true)
-        await update($, run, () => ({ project, scope: input.text ?? '', startedAt: at, lastAt: at, total: input.total, tokens: 0, isAuto: input.auto === true }) satisfies Run)
+        await update($, run, () => ({ project, scope: input.text ?? '', startedAt: at, lastAt: at, total: input.total, isAuto: input.auto === true }) satisfies Run)
         await update($, issue, () => null)
         await update($, agents, list => list.filter(one => one.status === 'running'))
         await update($, steps, () => [])
-        await update($, work, () => NO_WORK)
         await update($, results, () => [])
         break
       }
       case 'issue_start':
         await update($, issue, () => ({ id, title: input.title ?? '', size: input.size, kind: toKind(input.kind), startedAt: at }))
         await update($, steps, () => [{ text: '', at, auto: 'plan' }])
-        await update($, work, () => NO_WORK)
         break
       case 'step':
+        // A resumed run (run_start again, mid-issue) may report a step before any issue_start:
+        // a step naming an issue then starts tracking it, so the tracker does not stay blank.
+        if (!current && input.issue) {
+          await update($, issue, () => ({ id, title: input.title ?? '', size: input.size, kind: toKind(input.kind), startedAt: at }))
+          await update($, steps, () => [{ text: '', at, auto: 'plan' }])
+        }
         if (input.text) await update($, steps, list => [...list, { text: input.text ?? '', at }].slice(-200))
         break
       case 'issue_done':
@@ -228,7 +227,7 @@ export const register: Register = on => {
     return { result: 'ok', text: 'ok' }
   })
 
-  // Rule 12 guard for subagents, then work stats for the current issue: tool calls, files, commits.
+  // Rule 12 guard for subagents, then auto marks from the current issue's work: edits, verify.
   on('tool.call', async ($, e, next) => {
     const command = e.tool === 'Bash' || e.tool === 'PowerShell' ? e.command : ''
     if (e.agentId && isSubagentBanned(e.tool, command) && (await read($, isRunning))) {
@@ -236,44 +235,21 @@ export const register: Register = on => {
     }
     const ran = await next(e)
     if (e.tool !== TOOL && !ran.deny && (await read($, issue))) {
-      await update($, work, w => ({ ...w, tools: w.tools + 1 }))
       const isVerify = (e.tool === 'Skill' && /(^|:)verify$/.test(e.skill)) || TEST_RUN.test(e.tool)
       const isEdit = e.tool === 'Edit' || e.tool === 'Write' || e.tool === 'NotebookEdit'
       if (!ran.isError && (isVerify || isEdit)) await mark($, isVerify ? 'verify' : 'work')
     }
     return ran
   })
-  for (const tool of ['Edit', 'Write'] as const) {
-    on('tool.call', { tool }, async ($, e, next) => {
-      const ran = await next(e)
-      if (!ran.deny && (await read($, issue))) {
-        await update($, work, w => (w.files.includes(e.file_path) ? w : { ...w, files: [...w.files, e.file_path] }))
-      }
-      return ran
-    })
-  }
   for (const tool of ['Bash', 'PowerShell'] as const) {
     on('tool.call', { tool }, async ($, e, next) => {
       const ran = await next(e)
       if (!ran.deny && !ran.isError && isCommit(e.command) && (await read($, issue))) {
-        await update($, work, w => ({ ...w, commits: w.commits + 1 }))
         await mark($, 'commit')
       }
       return ran
     })
   }
-
-  // Run token total: every model request, main loop and subagents. Cache reads are left out:
-  // each step re-reads the whole context, which would swamp the figure.
-  on('turn.step', async function* ($, e, next) {
-    const response = yield* next(e)
-    const u = response.usage
-    if (u && (await read($, isRunning))) {
-      const n = u.input_tokens + u.output_tokens + u.cache_creation_input_tokens
-      await update($, run, r => (r ? { ...r, tokens: r.tokens + n } : r))
-    }
-    return response
-  })
 
   // Rule 12 cap; only main-loop spawns during a run count.
   on('agent.spawn', async ($, e, next) => {
@@ -315,12 +291,12 @@ export const register: Register = on => {
   // Widths come from the layout, not from counting characters: the desktop draws a proportional
   // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
-  // │  Project Cell  M2.5 Organic world                       issue 1m 48s   4 / 12  │
+  // │  Project Cell  M2.5 Organic world                                 auto on  │
   // │  TEC-91  [M]  Cell inspector panel with live gene readout                  │
   // │     ◉ plan ━━ ◉ work ── ○ verify ── ○ commit                               │
   // │     » ui wire gene readout                                                 │
   // │  ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ │
-  // │  agents 2/5   tools 9   files 3   commits 1         run 4m 18s   22k tok   auto on  │
+  // │  agents 2/5   issue 1m 48s                            run 4m 18s   4 / 12  │
   // ╰────────────────────────────────────────────────────────────────────────────╯
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const runNow = await read($, run)
@@ -331,12 +307,10 @@ export const register: Register = on => {
     const at = await read($, now)
     const current = await read($, issue)
     const list = await read($, steps)
-    const w = await read($, work)
     const done = await read($, results)
     const live = (await read($, agents)).filter(one => one.status === 'running')
     const okCount = done.filter(one => one.isDone).length
     const badCount = done.length - okCount
-    const last = done.at(-1)
     const total = runNow.total
     const tint = 'claude'
     // Border and padding take 6 cells. An estimate on the desktop, used only to choose what shows.
@@ -356,9 +330,8 @@ export const register: Register = on => {
 
     // Auto on is the loud state: nobody is there to answer, so it reads from across the room.
     const mode = runNow.isAuto ? <Text color="autoAccept" inverse bold> auto on </Text> : <Text color="subtle">auto off</Text>
-    // Where the run is and how far along: project bold, milestone dim (the issue title is the
-    // brightest line in the band; the milestone name gives way first), then the issue's time and
-    // the count. Needs input shows only once something needs it.
+    // Where the run is: project bold, milestone dim (the issue title is the brightest line in the
+    // band; the milestone name gives way first), and the mode.
     const [scopeId, scopeName] = splitScope(runNow.scope)
     const header = (
       <Box justifyContent="space-between">
@@ -369,11 +342,7 @@ export const register: Register = on => {
           )}
           <Text color="subtle" wrap="truncate-end">{scopeName}</Text>
         </Box>
-        {fixed(
-          current ? stat('issue', dur(at - current.startedAt)) : null,
-          badCount ? <Text color="warning">{'   '}{badCount} needs input</Text> : null,
-          total ? <Text bold>{'   '}{done.length} / {total}</Text> : <Text color="subtle" italic>{'   '}scoping…</Text>,
-        )}
+        {fixed(<Text>{'   '}</Text>, mode)}
       </Box>
     )
 
@@ -430,28 +399,22 @@ export const register: Register = on => {
     )
     const stepRow = detail ? <Text color="subtle" italic wrap="truncate-end">{`     » ${detail}`}</Text> : null
 
-    // Stats, then the last result, show whole or not at all, so the footer never ends in a stub.
-    // The counts are a terminal estimate; on the desktop the group also clips before the run time,
-    // tokens and mode, which end the footer.
-    const agentsText = `agents ${live.length}/${MAX_AGENTS}`
-    const statsText = current ? `   tools ${w.tools}   files ${w.files.length}   commits ${w.commits}` : ''
-    const lastText = last ? `   last ${last.isDone ? '✓' : '✗'} ${last.id} ${dur(last.ms)}` : ''
-    const runText = `   run ${dur(at - runNow.startedAt)}`
-    const tokText = `   ${fmtTokens(runNow.tokens)} tok`
-    const modeText = runNow.isAuto ? '    auto on ' : '   auto off'
-    const room = inner - agentsText.length - runText.length - tokText.length - modeText.length
-    const hasStats = statsText.length <= room
-    const hasLast = lastText.length <= room - (hasStats ? statsText.length : 0)
+    // How long and how far, under the bar it describes: subagents and the issue's time left; the
+    // run's time and the count right, needs input before them only once something needs it. The
+    // left side gives way first.
     const footer = hasFooter ? (
       <Box justifyContent="space-between">
         {fit(
           fixed(
-            <Text color={live.length >= MAX_AGENTS ? 'warning' : live.length ? tint : 'subtle'}>{agentsText}</Text>,
-            statsText && hasStats ? <Text color="subtle">{statsText}</Text> : null,
-            last && hasLast ? <Text color={last.isDone ? 'success' : 'warning'}>{lastText}</Text> : null,
+            <Text color={live.length >= MAX_AGENTS ? 'warning' : live.length ? tint : 'subtle'}>agents {live.length}/{MAX_AGENTS}</Text>,
+            current ? stat('issue', dur(at - current.startedAt)) : null,
           ),
         )}
-        {fixed(stat('run', dur(at - runNow.startedAt)), <Text color="subtle">{tokText}{'   '}</Text>, mode)}
+        {fixed(
+          badCount ? <Text color="warning">{'   '}{badCount} needs input</Text> : null,
+          stat('run', dur(at - runNow.startedAt)),
+          total ? <Text bold>{'   '}{done.length} / {total}</Text> : <Text color="subtle" italic>{'   '}scoping…</Text>,
+        )}
       </Box>
     ) : null
 
