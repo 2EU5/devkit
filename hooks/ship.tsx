@@ -286,8 +286,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The band on an 80-column terminal, in Claude Code's own accent so it sits with the rest of the
-  // interface in any theme; the border is the prompt box's own grey. Auto mode is the one purple thing, as Claude Code marks its own.
+  // The band on an 80-column terminal, in theme colours so it sits with the rest of the interface in
+  // any theme: the border is the prompt box's own grey, Claude Code's accent marks only the phase in
+  // progress, and auto mode is the one purple thing, as Claude Code marks its own.
   // Widths come from the layout, not from counting characters: the desktop draws a proportional
   // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
@@ -312,13 +313,19 @@ export const register: Register = on => {
     const okCount = done.filter(one => one.isDone).length
     const badCount = done.length - okCount
     const total = runNow.total
+    // The accent marks one thing: the phase in progress, what moves and what the band is glanced at for.
     const tint = 'claude'
     // Border and padding take 6 cells. An estimate on the desktop, used only to choose what shows.
     const inner = e.props.bodyColumns - 6
+    // Steps reported with no issue current are milestone work (end-of-milestone checks, a digest): the
+    // band shows them like an issue's, under the milestone, rather than "picking the next issue".
+    const isMilestone = !current && list.some(one => !one.auto)
     // The reported step, less the phase word it starts with; its row shows only when it says more.
-    const stages = phases(current ? list : [], current?.kind)
-    const stepNow = current ? list.findLast(one => !one.auto)?.text.trim() ?? '' : ''
-    const detail = stepDetail(stepNow, stages.find(one => one.state === 'now')?.name)
+    const stages = phases(current || isMilestone ? list : [], current?.kind)
+    const stepNow = current || isMilestone ? list.findLast(one => !one.auto)?.text.trim() ?? '' : ''
+    const phaseDetail = stepDetail(stepNow, stages.find(one => one.state === 'now')?.name)
+    // "verify milestone: …" under a milestone row says milestone once.
+    const detail = isMilestone ? stepDetail(phaseDetail, 'milestone') : phaseDetail
     // Full height is 7 rows, 8 with the step row. A short slot (fullscreen on a small terminal)
     // drops the footer rather than scroll.
     const hasFooter = !(e.props.maxRows < (detail ? 8 : 7))
@@ -351,7 +358,7 @@ export const register: Register = on => {
     // than any band, clipped by a one-row box. Other surfaces draw text in a proportional font,
     // where glyphs leave gaps and an overlong run wraps, so there the block is a filled box 40% of
     // the row high. Gaps split the issues while each keeps about 3 cells. The key carries the colour.
-    const BAR_TONE = { ok: 'success', bad: 'warning', now: tint, todo: 'subtle' } as const
+    const BAR_TONE = { ok: 'success', bad: 'warning', now: 'text', todo: 'subtle' } as const
     const split = !!total && total * 3 <= inner
     const blocks = total ? runBar(done.map(one => one.isDone), !!current, total, split) : [{ tone: 'todo' as const, count: 1 }]
     const isTerminal = e.surface === 'terminal'
@@ -373,8 +380,13 @@ export const register: Register = on => {
 
     const issueRow = current ? (
       <Box>
-        {fixed(<Text color={tint} bold>{current.id}</Text>, <Text color="subtle">{'  '}[{current.size ?? '?'}]{'  '}</Text>)}
+        {fixed(<Text bold>{current.id}</Text>, <Text color="subtle">{'  '}[{current.size ?? '?'}]{'  '}</Text>)}
         <Text wrap="truncate-end">{current.title}</Text>
+      </Box>
+    ) : isMilestone ? (
+      <Box>
+        {scopeId ? fixed(<Text bold>{scopeId}{'  '}</Text>) : null}
+        <Text wrap="truncate-end">milestone work</Text>
       </Box>
     ) : (
       <Text color="subtle" italic wrap="truncate-end">picking the next issue…</Text>
@@ -406,7 +418,7 @@ export const register: Register = on => {
       <Box justifyContent="space-between">
         {fit(
           fixed(
-            <Text color={live.length >= MAX_AGENTS ? 'warning' : live.length ? tint : 'subtle'}>agents {live.length}/{MAX_AGENTS}</Text>,
+            <Text color={live.length >= MAX_AGENTS ? 'warning' : live.length ? 'text' : 'subtle'}>agents {live.length}/{MAX_AGENTS}</Text>,
             current ? stat('issue', dur(at - current.startedAt)) : null,
           ),
         )}

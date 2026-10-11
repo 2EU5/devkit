@@ -54,7 +54,7 @@ test('band shows where the run is, the issue and its phases, then the bar and ho
     expect(text).toMatch(/\|auto off\|GAME-42\| {2}\[M\] {2}\|Jump\| {3}\|◉ plan\| ━━ \|◉ work\| ━━ \|◉ verify\| ── \|○ commit\|/)
     // the bar: four blocks on one row (glyphs on the terminal, filled boxes elsewhere)
     expect(text).toMatch(surface === 'terminal' ? /\|○ commit(\|━){4}\|agents/ : /\|○ commit\|agents/)
-    expect(await blocks($, 100, surface)).toBe('claudex1 +subtlex1 +subtlex1 +subtlex1')
+    expect(await blocks($, 100, surface)).toBe('textx1 +subtlex1 +subtlex1 +subtlex1')
     // footer: subagents and the issue's time; the run's time and the count
     expect(text).toMatch(/\|agents 0\/5\| {3}issue \|12m 30s\| {3}run \|13m 00s\| {3}0 \/ 4$/)
   }
@@ -206,7 +206,7 @@ test('the run bar is a block per issue while each keeps 3 cells, else merged run
   expect(await band($, 30)).toMatch(/ {3}0 \/ 10$/)
   // a long queue: the issue in progress, then the rest as one run
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S', total: 41 }))
-  expect(await blocks($, 76)).toBe('claudex1 subtlex40')
+  expect(await blocks($, 76)).toBe('textx1 subtlex40')
 })
 
 test('on the desktop the layout sizes the bar and clips what gives way, never the run time or count', async ($, on) => {
@@ -357,10 +357,10 @@ test('a resumed run tracks the issue a step names, though no issue_start came', 
   await $.tool.call(status({ action: 'step', issue: 'G-1', title: 'A', text: 'verify: rerun seeds' }))
   const text = await band($)
   expect(text).toMatch(/\|G-1\| {2}\[\?\] {2}\|A\| {3}\|◉ plan\| ━━ \|◉ work\| ━━ \|◉ verify\| ── \|○ commit\| {5}» rerun seeds\|/)
-  // a step with no issue named still does nothing when none is current
+  // a step with no issue named, once none is current, is milestone work
   await $.tool.call(status({ action: 'issue_done' }))
   await $.tool.call(status({ action: 'step', text: 'code noise' }))
-  expect(await band($)).toMatch(/picking the next issue…/)
+  expect(await band($)).toMatch(/\|milestone work\|/)
 })
 test('auto mode shows an auto on badge; attended says auto off', async ($, on) => {
   mock.clock(on, { now: 0 })
@@ -414,4 +414,19 @@ test('auto marks do not hide a council from the subagent cap', async ($, on) => 
   await $.tool.call(status({ action: 'step', text: 'council: pick upkeep curve' }))
   await $.tool.call({ tool: 'Edit', file_path: 'a.cs', old_string: 'x', new_string: 'y' } as never)
   for (let i = 0; i < 6; i++) expect(await $.agent.spawn(SPAWN)).toHaveProperty('agentId')
+})
+
+test('steps with no issue current show as milestone work, not as picking an issue', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  await $.tool.call(status({ action: 'run_start', project: 'Cell', text: 'M2.5 · Organic world', total: 36 }))
+  expect(await band($)).toMatch(/picking the next issue…/)
+  await $.tool.call(status({ action: 'step', text: 'verify milestone: rerunning M1 seeds 2, 3 on new wall physics' }))
+  const text = await band($)
+  expect(text).not.toMatch(/picking the next issue…/)
+  expect(text).toMatch(/\|M2\.5 {2}\|milestone work\| {3}\|◉ plan\| ━━ \|◉ work\| ━━ \|◉ verify\| ── \|○ commit\| {5}» rerunning M1 seeds 2, 3 on new wall physics\|/)
+  // the next issue takes over; done, it goes back to picking
+  await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
+  expect(await band($)).toMatch(/\|G-1\| {2}\[S\]/)
+  await $.tool.call(status({ action: 'issue_done' }))
+  expect(await band($)).toMatch(/picking the next issue…/)
 })
