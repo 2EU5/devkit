@@ -52,7 +52,7 @@ test('band shows run and milestone on one row, then the bar, issue, phases and w
   for (const surface of ['terminal', 'desktop'] as const) {
     const text = await band($, 100, undefined, surface)
     // header: project, milestone id and name; mode, run time, count, done and needs-input
-    expect(text).toMatch(/^Cell: \|\[M2\.5\] \|Organic world\| {3}\|auto off\| {3}run \|12m 30s\| {2}• {2}\|0 \/ 4 {2}\|✓ 0\| {2}✗ 0\|/)
+    expect(text).toMatch(/^\[Cell\] \|M2\.5 \|Organic world\| {3}\|auto off\| {3}run \|12m 30s\| {2}• {2}\|0 \/ 4 {2}\|✓ 0\| {2}✗ 0\|/)
     // run bar: four blocks on one row (glyphs on the terminal, filled boxes elsewhere), then the issue
     expect(text).toMatch(surface === 'terminal' ? /✗ 0(\|━){4}\|GAME-42/ : /✗ 0\|GAME-42/)
     expect(await blocks($, 100, surface)).toBe('claudex1 +subtlex1 +subtlex1 +subtlex1')
@@ -324,11 +324,11 @@ test('issue_start in a new milestone moves the scope', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'M1 · Core', total: 3 }))
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
-  expect(await band($)).toMatch(/^\[M1\] \|Core\|/)
+  expect(await band($)).toMatch(/^M1 \|Core\|/)
   await $.tool.call(status({ action: 'issue_done', text: 'done note' }))
-  expect(await band($)).toMatch(/^\[M1\] \|Core\|/)
+  expect(await band($)).toMatch(/^M1 \|Core\|/)
   await $.tool.call(status({ action: 'issue_start', issue: 'G-2', title: 'B', size: 'S', text: 'M2 · Polish' }))
-  expect(await band($)).toMatch(/^\[M2\] \|Polish\|.*\|1 \/ 3 {2}\|/)
+  expect(await band($)).toMatch(/^M2 \|Polish\|.*\|1 \/ 3 {2}\|/)
 })
 
 test('phase words match whole words only', async ($, on) => {
@@ -376,7 +376,7 @@ test('a PowerShell commit counts', async ($, on) => {
 test('auto mode shows an auto on badge; attended says auto off', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', project: 'Cell', text: 'm1', total: 2, auto: true }))
-  expect(await band($)).toMatch(/^Cell: \|m1\| {3}\| auto on \| {3}run /)
+  expect(await band($)).toMatch(/^\[Cell\] \|m1\| {3}\| auto on \| {3}run /)
   await $.tool.call(status({ action: 'run_start', project: 'Cell', text: 'm1', total: 2 }))
   expect(await band($)).toMatch(/\|auto off\|/)
 })

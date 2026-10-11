@@ -315,7 +315,7 @@ export const register: Register = on => {
   // Widths come from the layout, not from counting characters: the desktop draws a proportional
   // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
-  // │  Project Cell: [M2.5] Organic world     auto on   run 4m 18s  •  4 / 12  ✓ 3  ✗ 0 │
+  // │  [Project Cell] M2.5 Organic world     auto on   run 4m 18s  •  4 / 12  ✓ 3  ✗ 0 │
   // │  ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ │
   // │  TEC-91  [M]  Cell inspector panel with live gene readout    issue 1m 48s  │
   // │     ◉ plan ━━ ◉ work ── ○ verify ── ○ commit                               │
@@ -367,8 +367,8 @@ export const register: Register = on => {
       <Box justifyContent="space-between">
         <Box flexShrink={1}>
           {fixed(
-            runNow.project ? <Text bold>{runNow.project}{scopeName ? ': ' : ''}</Text> : null,
-            scopeId ? <Text color="subtle">[{scopeId}] </Text> : null,
+            runNow.project ? <Text bold>[{runNow.project}]{scopeName ? ' ' : ''}</Text> : null,
+            scopeId ? <Text color="subtle">{scopeId} </Text> : null,
           )}
           <Text wrap="truncate-end">{scopeName}</Text>
         </Box>
