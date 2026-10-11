@@ -54,10 +54,10 @@ test('band shows run and milestone on one row, then the bar, issue, phases and w
     // header: project, milestone id and name; mode, run time, done and needs-input
     expect(text).toMatch(/^▰ \|Cell: \|\[M2\.5\] \|Organic world\| {3}\|auto off\| {3}run \|12m 30s\| {2}• {2}\|✓ 0\| {2}✗ 0\|/)
     // run bar: four blocks, then the count, then a blank row
-    expect(text).toMatch(/✗ 0(\| ){4}\| {3}0 \/ 4\| \|▶/)
+    expect(text).toMatch(/✗ 0\| (\| ){4}\| {3}0 \/ 4\| \|▶/)
     expect(await blocks($, 100, surface)).toBe('claudex1 +subtlex1 +subtlex1 +subtlex1')
     // issue and its time, the tracker, then the step row (blank: "verify" says nothing more) and a blank row
-    expect(text).toMatch(/\|▶ GAME-42\| {2}\[M\] {2}\|Jump\| {3}issue \|12m 30s\| {3}\|✓ plan\| ━━ \|✓ work\| ━━ \|● verify\| ── \|○ commit\| \| \|agents/)
+    expect(text).toMatch(/\|▶ GAME-42\| {2}\[M\] {2}\|Jump\| {3}issue \|12m 30s\| {3}\|◉ plan\| ━━ \|◉ work\| ━━ \|◎ verify\| ── \|○ commit\| \| \|agents/)
     // footer: agents, work stats and run tokens
     expect(text).toMatch(/\|agents 0\/5\| {3}tools 0 {3}files 0 {3}commits 0\| {3}1\.5k tok$/)
   }
@@ -196,25 +196,25 @@ test('phase tracker goes back; work words enter work', async ($, on) => {
     await clock.advance(mins * 60_000)
   }
   // the work phase is current; verify was seen and is ahead again
-  expect(await band($)).toMatch(/\|✓ plan\| ━━ \|● work\| ── \|◌ verify\| ── \|○ commit\| {5}» code polish\|/)
+  expect(await band($)).toMatch(/\|◉ plan\| ━━ \|◎ work\| ── \|○ verify\| ── \|○ commit\| {5}» code polish\|/)
 })
 
 test('the issue kind, the work words and work itself enter the work phase', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start' }))
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'M', kind: 'UI' }))
-  expect(await band($)).toMatch(/\|● plan\| ── \|○ work\| ── /)
+  expect(await band($)).toMatch(/\|◎ plan\| ── \|○ work\| ── /)
   await $.tool.call(status({ action: 'step', text: 'plan hud' }))
   await $.tool.call(status({ action: 'step', text: 'ui wire hud' }))
-  expect(await band($)).toMatch(/\|✓ plan\| ━━ \|● work\| ── \|○ verify\|.*» ui wire hud/)
+  expect(await band($)).toMatch(/\|◉ plan\| ━━ \|◎ work\| ── \|○ verify\|.*» ui wire hud/)
   await $.tool.call(status({ action: 'step', text: 'work: tidy hud' }))
-  expect(await band($)).toMatch(/\|● work\| ── .*» tidy hud/)
+  expect(await band($)).toMatch(/\|◎ work\| ── .*» tidy hud/)
   await $.tool.call(status({ action: 'issue_done' }))
   expect(await band($)).toMatch(/\|○ plan\| ── \|○ work\| ── /)
   // a kind never takes over the fixed phase words
   await $.tool.call(status({ action: 'issue_start', issue: 'G-3', title: 'C', size: 'S', kind: 'c' }))
   await $.tool.call(status({ action: 'step', text: 'commit rocks' }))
-  expect(await band($)).toMatch(/\|✓ work\| ━━ \|✓ verify\| ━━ \|● commit\|/)
+  expect(await band($)).toMatch(/\|◉ work\| ━━ \|◉ verify\| ━━ \|◎ commit\|/)
 })
 test('the run bar is a block per issue while each keeps 3 cells, else merged runs; the count stays whole', async ($, on) => {
   mock.clock(on, { now: 0 })
@@ -254,7 +254,7 @@ test('narrow band drops the issue time; the step keeps its own row', async ($, o
   expect(await band($, 60)).toMatch(/issue \|0s/)
   const narrow = await band($, 45)
   expect(narrow).not.toMatch(/issue \|/)
-  expect(narrow).toMatch(/● work\| ── \|○ verify\| ── \|○ commit\| {5}» build rock noise\|/)
+  expect(narrow).toMatch(/◎ work\| ── \|○ verify\| ── \|○ commit\| {5}» build rock noise\|/)
 })
 test('narrow footer drops the stats, then the last result, never cuts them', async ($, on) => {
   mock.clock(on, { now: 0 })
@@ -279,7 +279,7 @@ test('picking state keeps the phase row; scoping shows before a total', async ($
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   const text = await band($)
-  expect(text).toMatch(/^▰ \|m1\| {3}\|auto off\|.* {2}✗ 0\| \| {3}scoping…\|/)
+  expect(text).toMatch(/^▰ \|m1\| {3}\|auto off\|.* {2}✗ 0\| \| \| {3}scoping…\|/)
   expect(await blocks($)).toBe('subtlex1')
   expect(text).toMatch(/picking the next issue…\| {3}\|○ plan\| ── \|○ work\| ── \|○ verify\| ── \|○ commit\| \|/)
 })
@@ -287,13 +287,13 @@ test('picking state keeps the phase row; scoping shows before a total', async ($
 test('a short slot drops the blank rows, then the footer', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
-  const full = await band($, 100, 10)
-  expect(full).toMatch(/scoping…\| \|picking/)
+  const full = await band($, 100, 11)
+  expect(full).toMatch(/✗ 0\| \| \| {3}scoping…\| \|picking/)
   expect(full).toMatch(/commit\| \| \|agents 0\/5/)
-  const short = await band($, 100, 9)
-  expect(short).toMatch(/scoping…\|picking/)
+  const short = await band($, 100, 10)
+  expect(short).toMatch(/✗ 0\| \| {3}scoping…\|picking/)
   expect(short).toMatch(/commit\| \|agents 0\/5/)
-  const shorter = await band($, 100, 7)
+  const shorter = await band($, 100, 8)
   expect(shorter).not.toMatch(/agents/)
   expect(shorter).toMatch(/picking the next issue…/)
 })
@@ -331,9 +331,9 @@ test('phase words match whole words only', async ($, on) => {
   await $.tool.call(status({ action: 'run_start' }))
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
   await $.tool.call(status({ action: 'step', text: 'committee notes' }))
-  expect(await band($)).toMatch(/\|● plan\| ── \|○ work\| ── \|○ verify\| ── \|○ commit\|/)
+  expect(await band($)).toMatch(/\|◎ plan\| ── \|○ work\| ── \|○ verify\| ── \|○ commit\|/)
   await $.tool.call(status({ action: 'step', text: 'commit: shader' }))
-  expect(await band($)).toMatch(/\|● commit\|/)
+  expect(await band($)).toMatch(/\|◎ commit\|/)
 })
 
 test('subagents get no git or Unity tools during a run', async ($, on) => {
@@ -398,16 +398,16 @@ test('the band advances by itself: edits enter the work step, verify and commits
   await $.tool.call(status({ action: 'run_start' }))
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S', kind: 'code' }))
   await $.tool.call({ tool: 'Edit', file_path: 'a.cs', old_string: 'x', new_string: 'y' } as never)
-  expect(await band($)).toMatch(/\|✓ plan\| ━━ \|● work\| ── \|○ verify\|/)
+  expect(await band($)).toMatch(/\|◉ plan\| ━━ \|◎ work\| ── \|○ verify\|/)
   await $.tool.call({ tool: 'Skill', skill: 'studio:verify' } as never)
-  expect(await band($)).toMatch(/\|✓ work\| ━━ \|● verify\| ── \|○ commit\|/)
+  expect(await band($)).toMatch(/\|◉ work\| ━━ \|◎ verify\| ── \|○ commit\|/)
   // a reported step can go back; an edit there does not move it forward
   await $.tool.call(status({ action: 'step', text: 'code fix null ref' }))
   await $.tool.call({ tool: 'Write', file_path: 'b.cs', content: 'z' } as never)
-  expect(await band($)).toMatch(/\|● work\| ── \|◌ verify\|.*» code fix null ref/)
+  expect(await band($)).toMatch(/\|◎ work\| ── \|○ verify\|.*» code fix null ref/)
   await $.tool.call({ tool: 'mcp__unity__run_tests' } as never)
   await $.tool.call({ tool: 'Bash', command: 'git commit -m "G-1: x"' } as never)
-  expect(await band($)).toMatch(/\|✓ verify\| ━━ \|● commit\|/)
+  expect(await band($)).toMatch(/\|◉ verify\| ━━ \|◎ commit\|/)
 })
 
 test('auto marks do not hide a council from the subagent cap', async ($, on) => {

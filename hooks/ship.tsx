@@ -116,7 +116,8 @@ export const phases = (list: readonly StepEntry[], kind?: string) => {
 export const stepDetail = (text: string, phase?: string) =>
   phase && startsWord(text.toLowerCase(), phase) ? text.slice(phase.length).replace(/^[\s:—–-]+/, '') : text
 
-const GLYPH = { done: '✓', now: '●', seen: '◌', todo: '○' } as const
+// Finished, in progress, not started; a phase left behind by going back is not started again.
+const GLYPH = { done: '◉', now: '◎', seen: '○', todo: '○' } as const
 const TONE = { done: 'success', now: 'claude', seen: 'subtle', todo: 'subtle' } as const
 
 // An auto mark, unless the newest entry already is the same mark.
@@ -309,15 +310,16 @@ export const register: Register = on => {
   })
 
   // The band on an 80-column terminal, in Claude Code's own accent so it sits with the rest of the
-  // interface in any theme. Auto mode is the one purple thing, as Claude Code marks its own.
+  // interface in any theme; the border is the prompt box's own grey. Auto mode is the one purple thing, as Claude Code marks its own.
   // Widths come from the layout, not from counting characters: the desktop draws a proportional
   // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
   // │  ▰ Project Cell: [M2.5] Organic world   auto on   run 4m 18s  •  ✓ 3  ✗ 0  │
+  // │                                                                            │
   // │  ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████     4 / 12    │
   // │                                                                            │
   // │  ▶ TEC-91  [M]  Cell inspector panel with live gene readout  issue 1m 48s  │
-  // │     ✓ plan ━━ ● work ── ○ verify ── ○ commit                               │
+  // │     ◉ plan ━━ ◎ work ── ○ verify ── ○ commit                               │
   // │     » ui wire gene readout                                                 │
   // │                                                                            │
   // │  agents 2/5   tools 9   files 3   commits 1   last ✓ TEC-90 50s   22k tok  │
@@ -341,10 +343,10 @@ export const register: Register = on => {
     const tint = 'claude'
     // Border and padding take 6 cells. An estimate on the desktop, used only to choose what shows.
     const inner = e.props.bodyColumns - 6
-    // Full height is 10 rows. A short slot (fullscreen on a small terminal) drops the blank
+    // Full height is 11 rows. A short slot (fullscreen on a small terminal) drops the blank
     // rows, then the footer, rather than scroll.
-    const hasGaps = !(e.props.maxRows < 10)
-    const hasFooter = !(e.props.maxRows < 8)
+    const hasGaps = !(e.props.maxRows < 11)
+    const hasFooter = !(e.props.maxRows < 9)
     const gap = () => (hasGaps ? <Text> </Text> : null)
     // Fixed segments never shrink; `fit` holds what may give way and clips it.
     const fixed = (...nodes: unknown[]) => <Box flexShrink={0}>{nodes}</Box>
@@ -461,8 +463,9 @@ export const register: Register = on => {
     ) : null
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={tint} paddingX={2}>
+      <Box flexDirection="column" borderStyle="round" borderColor="promptBorder" paddingX={2}>
         {header}
+        {gap()}
         {progress}
         {gap()}
         {issueRow}
