@@ -1,1 +1,1 @@
-{ "modules": ["./autopilot.tsx"] }
+{ "modules": ["./ship.tsx"] }

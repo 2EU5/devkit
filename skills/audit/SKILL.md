@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Audit a subject (skill, plugin, file, plan, design, doc) and flag issues to correct and improvements to make. Use only for /devkit:audit or when the user explicitly says "audit <subject>". A whole file counts as a subject; a code diff or PR does not (that is code-review).
+description: Audit a subject (skill, plugin, file, plan, design, doc) and flag issues to correct and improvements to make. Use only for /studio:audit or when the user explicitly says "audit <subject>". A whole file counts as a subject; a code diff or PR does not (that is code-review).
 argument-hint: <subject>
 ---
 
@@ -12,7 +12,7 @@ Subject: $ARGUMENTS
 
 ## Rules
 
-1. **Subject:** Resolve subject to concrete files or content before auditing. Not a file (Linear doc, chat text, plan): take its content. No subject given: attended, ask what to audit; unattended (e.g. called by autopilot), never ask: subject and context from caller, none given: return "no subject" and stop.
+1. **Subject:** Resolve subject to concrete files or content before auditing. Not a file (Linear doc, chat text, plan): take its content. No subject given: attended, ask what to audit; unattended (e.g. called by ship), never ask: subject and context from caller, none given: return "no subject" and stop.
 2. **Auditor:** Spawn one subagent (`Plan` type, read-only; unavailable: `general-purpose`) as auditor. Give it subject (non-file subject: paste content), context from this chat (unattended: caller's issue, acceptance criteria, GDD path), and rules 3–6. Tell it: "You are the auditor. Read only, never edit. Audit inline, spawn no subagents. Return report." Subject over ~5 files or ~1500 lines: split by area across parallel auditors (attended: or ask to narrow), merge reports. Agent tool unavailable (e.g. already running as subagent): audit inline.
 3. **Read first:** Read subject fully. Read things it references (other skills, files, configs) to check they exist and resolve.
 4. **Look for:**

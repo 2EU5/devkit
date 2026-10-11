@@ -1,9 +1,9 @@
 import type { AgentSpawnInput, RenderPropsOf } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
-import { isSubagentBanned } from '../hooks/autopilot'
+import { isSubagentBanned } from '../hooks/ship'
 import type { TestBody } from 'claude-code/testing'
 
-const status = (input: Record<string, unknown>) => ({ tool: 'mcp__devkit__status' as const, ...input })
+const status = (input: Record<string, unknown>) => ({ tool: 'mcp__studio__status' as const, ...input })
 const SPAWN = {
   tool_use_id: 't',
   prompt: 'p',
@@ -17,7 +17,7 @@ const SPAWN = {
 // The band's texts in order, joined by |.
 const band = async ($: Parameters<TestBody>[0], bodyColumns = 100, maxRows?: number, surface: 'terminal' | 'desktop' = 'terminal') => {
   const props = { hasSurvey: false, bodyColumns, maxRows } as RenderPropsOf['AbovePrompt']
-  const ui = await $.ui.mount({ plugin: 'devkit', surface, component: 'AbovePrompt', props })
+  const ui = await $.ui.mount({ plugin: 'studio', surface, component: 'AbovePrompt', props })
   const text = (await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')
   await ui.unmount()
   return text
@@ -40,7 +40,7 @@ test('band shows run, milestone, issue, phases and work', async ($, on) => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const text = await band($, 100, undefined, surface)
     // header: project and run time
-    expect(text).toMatch(/^◆ AUTOPILOT\| · \|Cell\| {2}run \|12m 30s\|/)
+    expect(text).toMatch(/^◆ SHIP\| · \|Cell\| {2}run \|12m 30s\|/)
     // milestone: dim id, name, run bar, count, done and needs-input; then a rule
     expect(text).toMatch(/\|M2\.5 \|Organic world\| {2}\|░{14}\| 0\/4\| {2}✓0\| ✗0\|─{96}\|/)
     // issue, then the stepper, the step and the issue's time
@@ -62,7 +62,7 @@ test('done issue lands in counters and last result', async ($, on) => {
   expect(text).toMatch(/ · last ✓ GAME-1 50s/)
 })
 
-test('sixth concurrent subagent is denied, except during decide', async ($, on) => {
+test('sixth concurrent subagent is denied, except during council', async ($, on) => {
   mock.clock(on, { now: 0 })
   let n = 0
   on('agent.spawn', () => ({ model: 'm', agentId: `a${++n}` }))
@@ -71,7 +71,7 @@ test('sixth concurrent subagent is denied, except during decide', async ($, on) 
   expect(await $.agent.spawn(SPAWN)).toHaveProperty('deny')
   expect(await band($)).toMatch(/agents 5\/5/)
 
-  await $.tool.call(status({ action: 'step', text: 'decide physics approach' }))
+  await $.tool.call(status({ action: 'step', text: 'council physics approach' }))
   expect(await $.agent.spawn(SPAWN)).toHaveProperty('agentId')
 })
 
@@ -98,20 +98,20 @@ test('run_end and an aborted main turn both end the run', async ($, on) => {
   on('ui.toast', () => ({ value: undefined }))
   on('turn.complete', () => ({ text: '' }))
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
-  expect(await band($)).toMatch(/AUTOPILOT/)
+  expect(await band($)).toMatch(/SHIP/)
   await $.tool.call(status({ action: 'run_end' }))
-  expect(await band($)).not.toMatch(/AUTOPILOT/)
+  expect(await band($)).not.toMatch(/SHIP/)
 
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   await $.turn.complete({ reason: 'aborted', text: '' } as never)
-  expect(await band($)).not.toMatch(/AUTOPILOT/)
+  expect(await band($)).not.toMatch(/SHIP/)
 })
 
 const SESSION = { cwd: '.', surface: 'terminal', isInteractive: true } as const
 
 test('the clock ticks both timers each second during a run', async ($, on) => {
   const clock = mock.clock(on, { now: 0 })
-  on('tool.register', () => ({ value: { tool: 'mcp__devkit__status' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__studio__status' } }))
   on('session.start', () => ({ cwd: '.' }))
   await $.session.start(SESSION)
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
@@ -140,14 +140,14 @@ test('a run with no progress for hours goes stale', async ($, on) => {
   const clock = mock.clock(on, { now: 0 })
   on('ui.render', ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
   on('ui.toast', () => ({ value: undefined }))
-  on('tool.register', () => ({ value: { tool: 'mcp__devkit__status' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__studio__status' } }))
   on('session.start', () => ({ cwd: '.' }))
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   await clock.advance(5 * 60 * 60_000)
   // The session (and its 1 s clock) starts late so the test does not tick through 5 hours.
   await $.session.start(SESSION)
   await clock.advance(1000)
-  expect(await band($)).not.toMatch(/AUTOPILOT/)
+  expect(await band($)).not.toMatch(/SHIP/)
 })
 
 test('abort counts as needs input; total can grow', async ($, on) => {
@@ -244,8 +244,8 @@ test('band yields to a survey', async ($, on) => {
   mock.clock(on, { now: 0 })
   on('ui.render', ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
-  const ui = await $.ui.mount({ plugin: 'devkit', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: true, bodyColumns: 100 } as RenderPropsOf['AbovePrompt'] })
-  expect((await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')).not.toMatch(/AUTOPILOT/)
+  const ui = await $.ui.mount({ plugin: 'studio', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: true, bodyColumns: 100 } as RenderPropsOf['AbovePrompt'] })
+  expect((await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')).not.toMatch(/SHIP/)
 })
 
 test('picking state keeps the phase row; scoping shows before a total', async ($, on) => {
@@ -277,14 +277,14 @@ test('a failed main turn ends the run; an answer (waiting on agents) does not', 
   on('turn.complete', () => ({ text: '' }))
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   await $.turn.complete({ agentId: 'a1', reason: 'answer', text: '' } as never)
-  expect(await band($)).toMatch(/AUTOPILOT/)
+  expect(await band($)).toMatch(/SHIP/)
   await $.turn.complete({ reason: 'answer', text: '' } as never)
-  expect(await band($)).toMatch(/AUTOPILOT/)
+  expect(await band($)).toMatch(/SHIP/)
   await $.turn.complete({ reason: 'error', text: '' } as never)
-  expect(await band($)).not.toMatch(/AUTOPILOT/)
+  expect(await band($)).not.toMatch(/SHIP/)
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   await $.turn.complete({ reason: 'refusal', text: '' } as never)
-  expect(await band($)).not.toMatch(/AUTOPILOT/)
+  expect(await band($)).not.toMatch(/SHIP/)
 })
 
 test('issue_start in a new milestone moves the scope', async ($, on) => {

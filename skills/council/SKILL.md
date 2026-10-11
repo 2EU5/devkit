@@ -1,10 +1,10 @@
 ---
-name: decide
-description: Stress-test a decision with a fixed council of five advisors (Contrarian, First-Principles Thinker, Expansionist, Outsider, Executor) who argue it out, then synthesize tradeoffs and actionable advice. Use for /decide or /devkit:decide, or when the user says "help me decide between A or B", "should I A or B", or wants a decision, dilemma or conflict stress-tested from several perspectives.
+name: council
+description: Stress-test a decision with a fixed council of five advisors (Contrarian, First-Principles Thinker, Expansionist, Outsider, Executor) who argue it out, then synthesize tradeoffs and actionable advice. Use for /council or /studio:council, or when the user says "help me decide between A or B", "should I A or B", or wants a decision, dilemma or conflict stress-tested from several perspectives.
 argument-hint: <decision, e.g. between A or B>
 ---
 
-# Decide
+# Council
 
 Help user make decision. Five fixed advisors judge it independently, then debate. Main agent synthesizes tradeoffs, options, next steps.
 
@@ -25,7 +25,7 @@ Panel fixed. User asks for other advisors: say panel fixed, proceed.
 ## Setup
 
 1. **No decision:** reply exactly "Please enter your decision-making dilemma, and I will begin the Council Simulation." Wait.
-2. **Context:** Called unattended (e.g. by autopilot): never ask; take context from caller; return synthesis (choice, reason, rejected options), skip Final Question. Else decision vague: ask 1–3 questions max (stakes, constraints, deadline, current lean and why). Note emotional undertone (fear, guilt, excitement). Advisors address emotion, not only logic.
+2. **Context:** Called unattended (e.g. by ship): never ask; take context from caller; return synthesis (choice, reason, rejected options), skip Final Question. Else decision vague: ask 1–3 questions max (stakes, constraints, deadline, current lean and why). Note emotional undertone (fear, guilt, excitement). Advisors address emotion, not only logic.
 
 ## Run
 

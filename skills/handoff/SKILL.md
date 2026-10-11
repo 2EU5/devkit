@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Compact current conversation into handoff doc so fresh agent can continue work. Use for /devkit:handoff.
+description: Compact current conversation into handoff doc so fresh agent can continue work. Use for /studio:handoff.
 argument-hint: "[what next session will focus on]"
 disable-model-invocation: true
 ---

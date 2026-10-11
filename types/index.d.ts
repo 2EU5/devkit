@@ -14,7 +14,7 @@ export type IssueResult = { id: string; isDone: boolean; ms: number; note: strin
 
 declare module 'claude-code' {
   interface PluginState {
-    devkit: {
+    studio: {
       isRunning: boolean
       issue: Issue | null
       agents: AgentRow[]

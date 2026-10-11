@@ -3,10 +3,10 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRow, IssueResult, Run, Size, StepEntry, Work } from '../types'
 
-// Live view of an /autopilot run: a bordered band above the prompt, toasts, and the
+// Live view of an /studio:ship run: a bordered band above the prompt, toasts, and the
 // skill's rule 12 cap (max 5 concurrent subagents) enforced at spawn.
 
-const TOOL = 'mcp__devkit__status'
+const TOOL = 'mcp__studio__status'
 const MAX_AGENTS = 5
 // The work phase is named per issue (its kind: code, ui, model, art, …). A step starting with
 // the kind or any of these words enters it; without a kind it takes the first such word seen.
@@ -17,14 +17,14 @@ const NO_WORK: Work = { tools: 0, files: [], commits: 0 }
 const STALE_MS = 4.5 * 60 * 60_000
 const COMMIT = /\bgit\b(?:\s+-[Cc]\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+commit\b/
 
-const isRunning = atom({ plugin: 'devkit', key: 'isRunning' } as const, false)
-const issue = atom({ plugin: 'devkit', key: 'issue' } as const, null)
-const agents = atom({ plugin: 'devkit', key: 'agents' } as const, [])
-const now = atom({ plugin: 'devkit', key: 'now' } as const, 0)
-const run = atom({ plugin: 'devkit', key: 'run' } as const, null)
-const steps = atom({ plugin: 'devkit', key: 'steps' } as const, [])
-const work = atom({ plugin: 'devkit', key: 'work' } as const, NO_WORK)
-const results = atom({ plugin: 'devkit', key: 'results' } as const, [])
+const isRunning = atom({ plugin: 'studio', key: 'isRunning' } as const, false)
+const issue = atom({ plugin: 'studio', key: 'issue' } as const, null)
+const agents = atom({ plugin: 'studio', key: 'agents' } as const, [])
+const now = atom({ plugin: 'studio', key: 'now' } as const, 0)
+const run = atom({ plugin: 'studio', key: 'run' } as const, null)
+const steps = atom({ plugin: 'studio', key: 'steps' } as const, [])
+const work = atom({ plugin: 'studio', key: 'work' } as const, NO_WORK)
+const results = atom({ plugin: 'studio', key: 'results' } as const, [])
 
 type StatusInput = {
   action: 'run_start' | 'issue_start' | 'step' | 'issue_done' | 'issue_abort' | 'run_end'
@@ -37,8 +37,8 @@ type StatusInput = {
   project?: string
 }
 
-// decide, audit and code-review (reported as audit) may run their own subagents beyond the cap (skill rule 12).
-export const isCapExempt = (s: string) => /^(decide|audit)/i.test(s)
+// council, audit and code-review (reported as audit) may run their own subagents beyond the cap (skill rule 12).
+export const isCapExempt = (s: string) => /^(council|audit)/i.test(s)
 export const isCommit = (command: string) => COMMIT.test(command)
 // Rule 12: subagents run no git and no Unity tools (MCP or the `unity` CLI) during a run. A command
 // counts at the start of any command in the line, after optional VAR=value prefixes; `command` is
@@ -79,7 +79,7 @@ export const bar = (ratio: number, width: number) => {
 }
 
 // Phase tracker: plan, the issue's kind, verify, commit. A step starting with a phase word
-// enters that phase (going back too); other steps (decide, audit, …) stay where they are.
+// enters that phase (going back too); other steps (council, audit, …) stay where they are.
 // A phase left behind by going back is `seen`.
 export const phases = (list: StepEntry[], kind?: string) => {
   const texts = list.map(one => one.text.trim().toLowerCase())
@@ -111,7 +111,7 @@ const endRun = async ($: EngineInterface, why: string) => {
   const done = list.filter(one => one.isDone).length
   await update($, isRunning, () => false)
   await update($, issue, () => null)
-  $.ui.toast(`Autopilot ${why}: ${done} done, ${list.length - done} need input`)
+  $.ui.toast(`Ship ${why}: ${done} done, ${list.length - done} need input`)
 }
 
 export const register: Register = on => {
@@ -119,7 +119,7 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'status',
       description:
-        'Report /autopilot progress to the live autopilot band. Call at run start, issue start, each step, issue done or abort, and run end.',
+        'Report /studio:ship progress to the live ship band. Call at run start, issue start, each step, issue done or abort, and run end.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -210,7 +210,7 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     const command = e.tool === 'Bash' || e.tool === 'PowerShell' ? e.command : ''
     if (e.agentId && isSubagentBanned(e.tool, command) && (await read($, isRunning))) {
-      return { deny: 'autopilot: subagents run no git and no Unity tools (rule 12). Leave it to the main agent.' }
+      return { deny: 'ship: subagents run no git and no Unity tools (rule 12). Leave it to the main agent.' }
     }
     const ran = await next(e)
     if (e.tool !== TOOL && !ran.deny && (await read($, issue))) {
@@ -257,7 +257,7 @@ export const register: Register = on => {
     const running = (await read($, agents)).filter(one => one.status === 'running').length
     const stepNow = (await read($, steps)).at(-1)?.text ?? ''
     if (running >= MAX_AGENTS && !isCapExempt(stepNow)) {
-      return { deny: `autopilot: ${MAX_AGENTS} subagents already running (rule 12). Wait for one to finish.` }
+      return { deny: `ship: ${MAX_AGENTS} subagents already running (rule 12). Wait for one to finish.` }
     }
     const spawned = await next(e)
     if (!('deny' in spawned && spawned.deny) && 'agentId' in spawned && spawned.agentId) {
@@ -270,7 +270,7 @@ export const register: Register = on => {
     }
 
     return spawned
-  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'autopilot: subagent cap check failed.' }))
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'ship: subagent cap check failed.' }))
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId) {
@@ -286,7 +286,7 @@ export const register: Register = on => {
 
   // The band on an 80-column terminal:
   // ╭─────────────────────────────────────────────────────────────────────────╮
-  // │ ◆ AUTOPILOT · Project Cell                                   run 4m 18s │
+  // │ ◆ SHIP · Project Cell                                   run 4m 18s │
   // │ M2.5 Organic world                           ███▉░░░░░░░░░░ 3/11  ✓3 ✗0 │
   // │ ─────────────────────────────────────────────────────────────────────── │
   // │ ▶ TEC-91 [M] Cell inspector panel with live gene readout                │
@@ -325,7 +325,7 @@ export const register: Register = on => {
     const header = (
       <Box justifyContent="space-between">
         <Box flexShrink={1}>
-          {fixed(<Text color="claude" bold>◆ AUTOPILOT</Text>, runNow.project ? <Text color="subtle"> · </Text> : null)}
+          {fixed(<Text color="claude" bold>◆ SHIP</Text>, runNow.project ? <Text color="subtle"> · </Text> : null)}
           {runNow.project ? <Text bold wrap="truncate-end">{runNow.project}</Text> : null}
         </Box>
         {stat('run', dur(at - runNow.startedAt))}

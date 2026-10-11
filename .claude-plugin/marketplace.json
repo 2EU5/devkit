@@ -1,14 +1,14 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "devkit",
-  "description": "Game dev workflows for Claude Code: design, audit, decide, Unity autopilot.",
+  "name": "studio",
+  "description": "Game dev workflows for Claude Code: GDD, audit, council, Unity ship loop.",
   "owner": {
     "name": "Zeus"
   },
   "plugins": [
     {
-      "name": "devkit",
-      "description": "Game dev workflows: GDD interviews, audits, decision councils, and an autonomous Unity C# / Linear / Git loop.",
+      "name": "studio",
+      "description": "Game dev workflows: GDD interviews, audits, decision councils, and a Unity C# / Linear / Git ship loop.",
       "source": "./",
       "category": "productivity"
     }
