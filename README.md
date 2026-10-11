@@ -31,7 +31,7 @@ Autopilot checks all of these at startup and stops if any is missing.
 ### Linear setup
 
 - Autopilot creates team labels `Needs Input` and `autopilot` if missing.
-- It works Backlog issues that are unassigned or assigned to you, oldest first by created date. Statuses are picked by type (backlog / unstarted / started / completed), so custom names are fine.
+- It works Backlog issues that are unassigned or assigned to you, milestone by milestone in project order, oldest first within each milestone; issues without a milestone go last. Statuses are picked by type (backlog / unstarted / started / completed), so custom names are fine.
 - Because the Linear MCP acts as you, the `autopilot` label marks issues autopilot started. Started issues without it are left alone.
 
 ### Progress UI
