@@ -15,10 +15,10 @@ Input: $ARGUMENTS
 | Advisor | Lens |
 |---------|------|
 | **The Contrarian** | Only looks at what will fail. |
-| **The First-Principles Thinker** | Rips apart assumptions plan rests on. |
+| **The First-Principles Thinker** | Attacks assumptions plan rests on. |
 | **The Expansionist** | Finds upside user missing. |
 | **The Outsider** | Knows nothing about user's industry. Asks questions insiders stopped asking. |
-| **The Executor** | Only cares what user will actually do Monday morning. |
+| **The Executor** | Only cares what user does Monday morning. |
 
 Panel fixed. User asks for other advisors: say panel fixed, proceed.
 
@@ -29,7 +29,7 @@ Panel fixed. User asks for other advisors: say panel fixed, proceed.
 
 ## Run
 
-Subagents (`general-purpose`), 5 in parallel per round. Separate subagents stop advisors anchoring on each other and drifting into agreement. Agent tool unavailable: role-play rounds inline, write each opening before reading others.
+Subagents (`general-purpose`), 5 in parallel per round. Separate subagents stop advisors anchoring on each other. No drift into agreement. Agent tool unavailable: role-play rounds inline, write each opening before reading others.
 
 ### Round 1: Opening
 Each subagent gets decision, context, one advisor with lens, advisor rules. Returns 150–250 words:
@@ -52,14 +52,14 @@ Each subagent gets its advisor, decision, all 5 openings. Returns 100–200 word
 
 ## Synthesize
 
-Main agent writes final output from both rounds. Never invent consensus. Show where advisors truly split.
+Main agent writes output from both rounds. Never invent consensus. Show where advisors truly split.
 
 ## Output
 
 Plain clear English, not caveman. Sections:
 
 ### Advisory Panel
-Dilemma in 2–3 sentences, with emotional stakes. Council table, one line per advisor on what their lens means for this decision.
+Dilemma in 2–3 sentences, with emotional stakes. Council table: one line per advisor, what lens means for this decision.
 
 ### Roundtable
 Each opening, condensed, in advisor's voice. Bold one-line position per advisor.

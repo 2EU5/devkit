@@ -14,15 +14,15 @@ Input: $ARGUMENTS
 
 ## Doc principles
 
-1. **Sharp vision first.** Pitch paragraph, target player experience, 3–5 pillars, core loop: all before system detail. Each pillar must be able to kill a feature. "Satisfying combat" can't. "Every fight can be avoided" can.
-2. **Intent with instructions.** Each feature: problem it solves, experience it serves, then how it works. The why lets readers fill gaps and shows what is safe to cut.
+1. **Sharp vision first.** Pitch paragraph, target player experience, 3–5 pillars, core loop: all before system detail. Each pillar must kill some feature. "Satisfying combat" can't. "Every fight can be avoided" can.
+2. **Intent with instructions.** Each feature: problem it solves, experience it serves, then how it works. Why lets readers fill gaps, shows what safe to cut.
 3. **Layered.** One-page overview, readable in 10 min. Then one section per system. Then detail. Reader stops at needed depth.
 4. **Short, visual.** Length tracks complexity and risk, not enthusiasm. Tables, Mermaid flow/state diagrams, loop diagrams, annotated layouts where they beat prose.
 5. **Concrete, testable.** Real numbers marked tunable. Worked examples. Edge cases. "Done when" per feature. Reference games as shorthand ("closer to X than Y"). One term per thing, defined in glossary.
 6. **Player's side.** What player sees, decides, feels, not only machinery. Always include first-session walkthrough.
 7. **Honest uncertainty.** Tag each decision **Decided**, **Proposed** or **Open**. List open questions, assumptions, risks, each with prototype or test that settles it.
 8. **Explicit scope.** Non-goals. Must/should/could. Parking lot for good ideas not for this version.
-9. **Alive, second to build.** Sections have owners and last-updated dates. Playable build is source of truth. Stale doc is bug.
+9. **Alive, second to build.** Each section has owner and last-updated date. Playable build is source of truth. Stale doc is bug.
 10. **Decision log.** What, when, why, rejected alternatives.
 
 ## Phase 1: Calibrate (one short round)
@@ -41,12 +41,12 @@ Scale doc:
 ## Phase 2: Interview
 
 ### How
-- **2–4 related questions per round.** Never wall of 20. Multiple-choice answers (genre, camera, platform, session length, team size): use AskUserQuestion tool if available. Vision and feel: open questions.
+- **2–4 related questions per round.** Never wall of 20. Multiple-choice answers (genre, camera, platform, session length, team size): AskUserQuestion tool if available. Vision and feel: open questions.
 - **Offer drafts to react to.** Proposal easier than blank page. Example: "Pillar might be 'Every run tells a story.' Keep, change, drop?"
 - **Push back on vagueness.** Pillar rules nothing out: ask what feature it kills. Answer is "fun": ask what moment makes player grin.
 - **Ask for references.** "Which games is this closest to, and how is it different from each?"
 - **Accept "not sure", "you decide".** "Not sure" = **Open**. "You decide" = Claude proposes, tagged **Proposed**, never Decided.
-- **Follow energy.** More questions on systems user is excited or worried about. Fewer on standard ones.
+- **Follow energy.** More questions on systems user excited or worried about. Fewer on standard ones.
 - Keep running internal list: answers, contradictions, open items.
 
 ### Cover (roughly in order)
@@ -156,9 +156,9 @@ Check doc against list. Fix failures:
 - [ ] Padding, repetition, generic filler cut?
 - [ ] Nothing contradicts user, or current build if one exists?
 
-**Output format:** session offers document artifact type (e.g. Docs): create GDD there, so user can edit, comment, export. Else write Markdown file and send it. User asks specific format (.docx, Notion, Google Doc): use that.
+**Output format:** session offers document artifact type (e.g. Docs): create GDD there, so user can edit, comment, export. Else write Markdown file, send it. User asks specific format (.docx, Notion, Google Doc): use that.
 
-After delivery: one-line summary, one natural next step, usually prototype that settles biggest open risk. Linear connected: offer to turn open questions and prototypes into issues.
+After delivery: one-line summary, one next step, usually prototype that settles biggest open risk. Linear connected: offer to turn open questions and prototypes into issues.
 
 ## Update existing GDD
 

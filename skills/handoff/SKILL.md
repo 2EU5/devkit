@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Handoff
 
-Write handoff doc from current conversation. Fresh agent with no chat history must continue work from it.
+Write handoff doc from current conversation. Fresh agent, no chat history, must continue work from it.
 
 Focus: $ARGUMENTS
 
@@ -21,7 +21,7 @@ Focus: $ARGUMENTS
    - Decisions and why. Rejected options and why.
    - Open questions, blockers, risks.
    - Next steps, in order.
-   - Suggested skills: which skills next agent should load with Skill tool, and when.
+   - Suggested skills: which skills next agent loads with Skill tool, and when.
 4. **No duplication:** Content already in other artifacts (specs, plans, ADRs, issues, commits, diffs): reference by path or URL. Never copy.
 5. **Self-contained:** Reader has no chat context. Absolute paths. No "as discussed above".
 6. **Redact:** Remove API keys, tokens, passwords and personal data.
