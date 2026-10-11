@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRow, IssueResult, Run, Size, StepEntry, Work } from '../types'
+import type { AgentRow, AutoMark, IssueResult, Run, Size, StepEntry, Work } from '../types'
 
 // Live view of an /studio:ship run: a bordered band above the prompt, toasts, and the
 // skill's rule 12 cap (max 5 concurrent subagents) enforced at spawn.
@@ -15,6 +15,7 @@ const DEFAULT_KIND = 'build'
 const NO_WORK: Work = { tools: 0, files: [], commits: 0 }
 // No status call for longer than the XL limit plus slack: the run died without run_end.
 const STALE_MS = 4.5 * 60 * 60_000
+const TEST_RUN = /run_?tests?|tests?_?run/i
 const COMMIT = /\bgit\b(?:\s+-[Cc]\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+commit\b/
 
 const isRunning = atom({ plugin: 'studio', key: 'isRunning' } as const, false)
@@ -36,6 +37,7 @@ type StatusInput = {
   total?: number
   project?: string
   auto?: boolean
+  steps?: string[]
 }
 
 // council, audit and code-review (reported as audit) may run their own subagents beyond the cap (skill rule 12).
@@ -46,8 +48,10 @@ export const isCommit = (command: string) => COMMIT.test(command)
 // set for shell tools only. shortcut: a search pattern ending in `|git ` is refused too; rare, costs one call.
 export const isSubagentBanned = (tool: string, command = '') =>
   /(?:^|_)unity/i.test(tool) || /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:git|unity)\b/.test(command)
-// A step starts with a phase word as a whole word: "plan" yes, "planet" no.
-const startsWord = (text: string, word: string) => text === word || new RegExp(`^${word}\\b`).test(text)
+// A step starts with a phase word as a whole word: "plan" yes, "planet" no. Words may be the
+// issue's own step names, so they are escaped.
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const startsWord = (text: string, word: string) => text === word || new RegExp(`^${escape(word)}(?!\\w)`).test(text)
 
 export const fmtTokens = (n: number) =>
   n < 1000 ? `${n}` : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1)}M`
@@ -64,6 +68,12 @@ export const dur = (ms: number) => {
 // The issue's kind as one short lowercase word ("UI" -> "ui"), or undefined.
 export const toKind = (s?: string) =>
   s?.trim().toLowerCase().split(/\s+/)[0]?.replace(/[^a-z0-9-]/g, '').slice(0, 10) || undefined
+
+// The issue's own steps: up to 8 trimmed names of up to 20 cells, or undefined.
+export const toPlan = (list?: unknown) => {
+  const names = Array.isArray(list) ? list.filter((one): one is string => typeof one === 'string').map(one => one.trim().slice(0, 20)).filter(Boolean).slice(0, 8) : []
+  return names.length >= 2 ? names : undefined
+}
 
 // "M2.5 · Organic world" -> ['M2.5', 'Organic world'], so a short id can be drawn dim.
 export const splitScope = (scope: string): readonly [string, string] => {
@@ -102,26 +112,45 @@ export const runBar = (done: readonly boolean[], hasCurrent: boolean, total: num
   return parts
 }
 
-// Phase tracker: plan, the issue's kind, verify, commit. A step starting with a phase word
-// enters that phase (going back too); other steps (council, audit, …) stay where they are.
-// A phase left behind by going back is `seen`.
-export const phases = (list: StepEntry[], kind?: string) => {
-  const texts = list.map(one => one.text.trim().toLowerCase())
-  const firstWork = texts.map(text => WORK_WORDS.find(word => startsWord(text, word))).find(Boolean)
-  const label = kind || firstWork || DEFAULT_KIND
-  const work = [label, ...WORK_WORDS]
+// Phase tracker over the issue's steps: its own plan when it sent one, else plan, its kind,
+// verify, commit. A reported step enters the phase it names (going back too): the longest step
+// name it starts with, else the plan, verify or commit step its first word names, else the work
+// step for a work word. Other steps (council, audit, …) stay where they are. Auto marks come from
+// the work itself (an edit, a verify, a commit) and only move forward. A phase left behind by
+// going back is `seen`.
+export const phases = (list: readonly StepEntry[], kind?: string, plan?: readonly string[]) => {
+  const reported = list.filter(one => !one.auto).map(one => one.text.trim().toLowerCase())
+  const firstWork = reported.map(text => WORK_WORDS.find(word => startsWord(text, word))).find(Boolean)
+  const names = plan?.length ? [...plan] : ['plan', kind || firstWork || DEFAULT_KIND, 'verify', 'commit']
+  const lower = names.map(name => name.toLowerCase())
+  const named = (word: string) => lower.findIndex(name => startsWord(name, word))
+  const isFixed = (name: string) => ['plan', 'verify', 'commit'].some(word => startsWord(name, word))
+  const work = Math.max(0, lower.findIndex((name, i) => i > 0 && !isFixed(name)))
+  const at: Record<AutoMark, number> = {
+    plan: 0,
+    work: work || Math.min(1, names.length - 1),
+    verify: named('verify'),
+    commit: named('commit') >= 0 ? named('commit') : names.length - 1,
+  }
+  const find = (text: string) => {
+    let best = -1
+    lower.forEach((name, i) => {
+      if (startsWord(text, name) && (best < 0 || name.length > lower[best]!.length)) best = i
+    })
+    if (best >= 0) return best
+    const fixed = ['plan', 'verify', 'commit'].find(word => startsWord(text, word))
+    if (fixed) return named(fixed)
+    return [kind, ...WORK_WORDS].some(word => word && startsWord(text, word)) ? at.work : -1
+  }
   const seen = new Set<number>()
   let current = -1
-  for (const text of texts) {
-    // plan, verify and commit win over the work words, whatever the kind is.
-    const named = ['plan', '', 'verify', 'commit'].findIndex(word => word && startsWord(text, word))
-    const hit = named >= 0 ? named : work.some(word => startsWord(text, word)) ? 1 : -1
-    if (hit >= 0) {
-      current = hit
-      seen.add(hit)
-    }
+  for (const one of list) {
+    const hit = one.auto ? at[one.auto] : find(one.text.trim().toLowerCase())
+    if (hit < 0 || (one.auto && hit <= current)) continue
+    current = hit
+    seen.add(hit)
   }
-  return ['plan', label, 'verify', 'commit'].map((name, i) => {
+  return names.map((name, i) => {
     const state = i < current ? 'done' : i === current ? 'now' : seen.has(i) ? 'seen' : 'todo'
     return { name, state } as const
   })
@@ -129,6 +158,12 @@ export const phases = (list: StepEntry[], kind?: string) => {
 
 const GLYPH = { done: '✓', now: '●', seen: '◌', todo: '○' } as const
 const TONE = { done: 'success', now: 'claude', seen: 'subtle', todo: 'subtle' } as const
+
+// An auto mark, unless the newest entry already is the same mark.
+const mark = async ($: EngineInterface, auto: AutoMark) => {
+  const at = await $.clock.now()
+  await update($, steps, list => (list.at(-1)?.auto === auto ? list : [...list, { text: '', at, auto }].slice(-200)))
+}
 
 const endRun = async ($: EngineInterface, why: string) => {
   const list = await read($, results)
@@ -162,6 +197,12 @@ export const register: Register = on => {
           },
           total: { type: 'number', description: 'any action: issues in scope (updated as sub-issues are added)' },
           project: { type: 'string', description: 'run_start: Linear project name' },
+          steps: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'issue_start or step: this issue\'s steps in order, 3 to 8 short names (plan first, verify and commit last), e.g. ["plan", "balance round 1", "balance round 2", "verify", "commit"]. Replaces the default plan, kind, verify, commit.',
+          },
           auto: { type: 'boolean', description: 'run_start: true in auto mode (/studio:ship auto), false when attended' },
         },
         required: ['action'],
@@ -206,12 +247,13 @@ export const register: Register = on => {
         break
       }
       case 'issue_start':
-        await update($, issue, () => ({ id, title: input.title ?? '', size: input.size, kind: toKind(input.kind), startedAt: at }))
-        await update($, steps, () => [])
+        await update($, issue, () => ({ id, title: input.title ?? '', size: input.size, kind: toKind(input.kind), plan: toPlan(input.steps), startedAt: at }))
+        await update($, steps, () => [{ text: '', at, auto: 'plan' }])
         await update($, work, () => NO_WORK)
         break
       case 'step':
-        await update($, steps, list => [...list, { text: input.text ?? '', at }].slice(-200))
+        if (toPlan(input.steps)) await update($, issue, i => (i ? { ...i, plan: toPlan(input.steps) } : i))
+        if (input.text) await update($, steps, list => [...list, { text: input.text ?? '', at }].slice(-200))
         break
       case 'issue_done':
       case 'issue_abort': {
@@ -240,6 +282,9 @@ export const register: Register = on => {
     const ran = await next(e)
     if (e.tool !== TOOL && !ran.deny && (await read($, issue))) {
       await update($, work, w => ({ ...w, tools: w.tools + 1 }))
+      const isVerify = (e.tool === 'Skill' && /(^|:)verify$/.test(e.skill)) || TEST_RUN.test(e.tool)
+      const isEdit = e.tool === 'Edit' || e.tool === 'Write' || e.tool === 'NotebookEdit'
+      if (!ran.isError && (isVerify || isEdit)) await mark($, isVerify ? 'verify' : 'work')
     }
     return ran
   })
@@ -257,6 +302,7 @@ export const register: Register = on => {
       const ran = await next(e)
       if (!ran.deny && !ran.isError && isCommit(e.command) && (await read($, issue))) {
         await update($, work, w => ({ ...w, commits: w.commits + 1 }))
+        await mark($, 'commit')
       }
       return ran
     })
@@ -280,7 +326,7 @@ export const register: Register = on => {
       return next(e)
     }
     const running = (await read($, agents)).filter(one => one.status === 'running').length
-    const stepNow = (await read($, steps)).at(-1)?.text ?? ''
+    const stepNow = (await read($, steps)).findLast(one => !one.auto)?.text ?? ''
     if (running >= MAX_AGENTS && !isCapExempt(stepNow)) {
       return { deny: `ship: ${MAX_AGENTS} subagents already running (rule 12). Wait for one to finish.` }
     }
@@ -412,17 +458,34 @@ export const register: Register = on => {
       <Text color="subtle" italic wrap="truncate-end">picking the next issue…</Text>
     )
 
-    // Same row in both states, so the band keeps its height between issues. The stepper never
-    // shrinks; the step shows while it keeps 12 cells. A link turns solid once its phase is reached.
-    const stages = phases(current ? list : [], current?.kind)
-    const stepNow = current ? list.at(-1)?.text ?? '' : ''
-    const stepperLen = 3 + stages.reduce((n, one, i) => n + (i ? 4 : 0) + 2 + one.name.length, 0)
-    const hasStep = !!stepNow && inner - stepperLen - 5 >= 12
+    // Same row in both states, so the band keeps its height between issues. Too many steps for the
+    // row: the done ones fold into "n done", then the ones to come into "n more"; the current step
+    // always shows. The reported step shows while it keeps 12 cells, unless it only names the
+    // current step. A link turns solid once its phase is reached.
+    const stages = phases(current ? list : [], current?.kind, current?.plan)
+    const stepperLen = (items: readonly { name: string }[]) => 3 + items.reduce((n, one, i) => n + (i ? 4 : 0) + 2 + one.name.length, 0)
+    const reach = stages.findIndex(one => one.state === 'now' || one.state === 'todo' || one.state === 'seen')
+    const head = reach < 0 ? stages.length - 1 : reach
+    const fold = (doneCount: number, moreCount: number) => [
+      ...(doneCount ? [{ name: `${doneCount} done`, state: 'done' as const }] : []),
+      ...stages.slice(doneCount, stages.length - moreCount),
+      ...(moreCount ? [{ name: `${moreCount} more`, state: 'todo' as const }] : []),
+    ]
+    let [folded, later] = [0, 0]
+    while (stepperLen(fold(folded, later)) > inner) {
+      if (folded < head) folded++
+      else if (later < stages.length - head - 1) later++
+      else break
+    }
+    const shown = fold(folded, later)
+    const stepNow = current ? list.findLast(one => !one.auto)?.text.trim() ?? '' : ''
+    const nowName = stages.find(one => one.state === 'now')?.name.toLowerCase()
+    const hasStep = !!stepNow && stepNow.toLowerCase() !== nowName && inner - stepperLen(shown) - 5 >= 12
     const phaseRow = (
       <Box>
         {fixed(
           <Text>{'   '}</Text>,
-          ...stages.flatMap((one, i) => [
+          ...shown.flatMap((one, i) => [
             !i ? null : one.state === 'done' || one.state === 'now' ? (
               <Text key={`to${i}`} color="success"> ━━ </Text>
             ) : (

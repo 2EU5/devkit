@@ -46,7 +46,7 @@ test('band shows run, milestone, issue, phases and work', async ($, on) => {
     // run bar: one segment per issue, the one in progress first, then the count; then a blank row
     expect(text).toMatch(/\|━{20}\| ─{20} ─{20} ─{20}\| {3}0 \/ 4\| \|/)
     // issue and its time, then the stepper and the step
-    expect(text).toMatch(/\|▶ GAME-42\| {2}\[M\] {2}\|Jump\| {3}issue \|12m 30s\| {3}\|✓ plan\| ━━ \|✓ code\| ━━ \|● verify\| ── \|○ commit\| {5}» verify\| \|/)
+    expect(text).toMatch(/\|▶ GAME-42\| {2}\[M\] {2}\|Jump\| {3}issue \|12m 30s\| {3}\|✓ plan\| ━━ \|✓ code\| ━━ \|● verify\| ── \|○ commit\| \|/)
     // footer: agents, work stats and run tokens
     expect(text).toMatch(/\|agents 0\/5\| {3}tools 0 {3}files 0 {3}commits 0\| {3}1\.5k tok$/)
   }
@@ -191,7 +191,7 @@ test('the work phase is named by the issue kind', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start' }))
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'M', kind: 'UI' }))
-  expect(await band($)).toMatch(/\|○ plan\| ── \|○ ui\| ── /)
+  expect(await band($)).toMatch(/\|● plan\| ── \|○ ui\| ── /)
   await $.tool.call(status({ action: 'step', text: 'plan hud' }))
   // any work word enters the work phase, still named by the kind
   await $.tool.call(status({ action: 'step', text: 'code bind gene data' }))
@@ -221,7 +221,7 @@ test('the run bar fills the row; a long queue goes solid, a narrow band keeps on
   expect(await band($, 76)).toMatch(/\|━━\|─{57}\| {3}0 \/ 41\|/)
 })
 
-test('narrow band drops the step, then the issue time, never the stepper', async ($, on) => {
+test('narrow band drops the step, then the issue time, then folds the steps to come', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start' }))
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
@@ -233,7 +233,7 @@ test('narrow band drops the step, then the issue time, never the stepper', async
   expect(mid).toMatch(/issue \|0s/)
   const narrow = await band($, 45)
   expect(narrow).not.toMatch(/issue \|/)
-  expect(narrow).toMatch(/● build\| ── \|○ verify\| ── \|○ commit/)
+  expect(narrow).toMatch(/\|✓ 1 done\| ━━ \|● build\| ── \|○ 2 more\|/)
 })
 
 test('narrow footer drops the stats, then the last result, never cuts them', async ($, on) => {
@@ -309,10 +309,10 @@ test('phase words match whole words only', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start' }))
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
-  await $.tool.call(status({ action: 'step', text: 'planet shader research' }))
-  expect(await band($)).toMatch(/\|○ plan\| ── \|○ build\|/)
-  await $.tool.call(status({ action: 'step', text: 'plan: shader' }))
-  expect(await band($)).toMatch(/\|● plan\|/)
+  await $.tool.call(status({ action: 'step', text: 'committee notes' }))
+  expect(await band($)).toMatch(/\|● plan\| ── \|○ build\| ── \|○ verify\| ── \|○ commit\|/)
+  await $.tool.call(status({ action: 'step', text: 'commit: shader' }))
+  expect(await band($)).toMatch(/\|● commit\|/)
 })
 
 test('subagents get no git or Unity tools during a run', async ($, on) => {
@@ -361,4 +361,50 @@ test('run bar tones follow the queue: done, needs input, in progress, then the r
   // a long queue maps cells onto issues
   expect(tones(runBar([true], false, 10, 5))).toEqual(['ok:━', 'todo:────'])
   expect(runBar([], false, 0, 10)).toEqual([])
+})
+
+test('an issue can bring its own steps, set at issue_start or after planning', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  await $.tool.call(status({ action: 'run_start' }))
+  const plan = ['plan', 'balance round 1', 'balance round 2', 'verify', 'commit']
+  await $.tool.call(status({ action: 'issue_start', issue: 'CRE-24', title: 'Tune upkeep', size: 'L', steps: plan }))
+  expect(await band($, 120)).toMatch(/\|● plan\| ── \|○ balance round 1\| ── \|○ balance round 2\| ── \|○ verify\| ── \|○ commit\|/)
+  // the longest step name wins; the step text shows when it says more than the name
+  await $.tool.call(status({ action: 'step', text: 'balance round 2 pellet energy' }))
+  expect(await band($, 120)).toMatch(/\|✓ balance round 1\| ━━ \|● balance round 2\| ── \|○ verify\|.*» balance round 2 pellet energy/)
+  // a new plan after planning replaces the steps
+  await $.tool.call(status({ action: 'issue_start', issue: 'CRE-25', title: 'B', size: 'M' }))
+  await $.tool.call(status({ action: 'step', text: 'plan', steps: ['plan', 'shader', 'material', 'verify', 'commit'] }))
+  await $.tool.call(status({ action: 'step', text: 'material pass' }))
+  expect(await band($, 120)).toMatch(/\|✓ plan\| ━━ \|✓ shader\| ━━ \|● material\| ── \|○ verify\|/)
+})
+
+test('the band advances by itself: edits enter the work step, verify and commits theirs', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  on('tool.call', () => ({ result: 'ok', text: 'ok', isError: false }) as never)
+  await $.tool.call(status({ action: 'run_start' }))
+  await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S', kind: 'code' }))
+  await $.tool.call({ tool: 'Edit', file_path: 'a.cs', old_string: 'x', new_string: 'y' } as never)
+  expect(await band($)).toMatch(/\|✓ plan\| ━━ \|● code\| ── \|○ verify\|/)
+  await $.tool.call({ tool: 'Skill', skill: 'studio:verify' } as never)
+  expect(await band($)).toMatch(/\|✓ code\| ━━ \|● verify\| ── \|○ commit\|/)
+  // a reported step can go back; an edit there does not move it forward
+  await $.tool.call(status({ action: 'step', text: 'code fix null ref' }))
+  await $.tool.call({ tool: 'Write', file_path: 'b.cs', content: 'z' } as never)
+  expect(await band($)).toMatch(/\|● code\| ── \|◌ verify\|.*» code fix null ref/)
+  await $.tool.call({ tool: 'mcp__unity__run_tests' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m "G-1: x"' } as never)
+  expect(await band($)).toMatch(/\|✓ verify\| ━━ \|● commit\|/)
+})
+
+test('auto marks do not hide a council from the subagent cap', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  on('tool.call', () => ({ result: 'ok', text: 'ok', isError: false }) as never)
+  let n = 0
+  on('agent.spawn', () => ({ model: 'm', agentId: `a${++n}` }))
+  await $.tool.call(status({ action: 'run_start' }))
+  await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
+  await $.tool.call(status({ action: 'step', text: 'council: pick upkeep curve' }))
+  await $.tool.call({ tool: 'Edit', file_path: 'a.cs', old_string: 'x', new_string: 'y' } as never)
+  for (let i = 0; i < 6; i++) expect(await $.agent.spawn(SPAWN)).toHaveProperty('agentId')
 })
