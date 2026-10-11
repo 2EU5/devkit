@@ -6,7 +6,7 @@ Claude Code plugin for game dev workflows.
 |-------|---------|--------------|
 | autopilot | `/devkit:autopilot [afk] [task]` | Autonomous Unity C# loop: takes Linear Backlog issues, implements them in the Unity Editor, verifies, commits and pushes. Asks you when it needs you; with `afk` it never asks and decides itself. |
 | design | `/devkit:design [idea or GDD]` | Interviews you about a game idea, then writes or updates a game design document. |
-| audit | `/devkit:audit <subject>` | Reviews a skill, plan, design or doc and gives a prioritized fix list. |
+| audit | `/devkit:audit <subject>` | Audits a skill, plan, design or doc and gives a checked, prioritized fix list. Not for code diffs (use `code-review`). |
 | decide | `/devkit:decide <decision>` or "help me decide between A or B" | Stress-tests a decision with a fixed council (Contrarian, First-Principles Thinker, Expansionist, Outsider, Executor) who debate it, then synthesizes tradeoffs and next steps. |
 | handoff | `/devkit:handoff [next focus]` | Compacts the current conversation into a handoff doc in your OS temp folder so a fresh session can pick up the work. |
 
