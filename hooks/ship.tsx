@@ -116,8 +116,9 @@ export const phases = (list: readonly StepEntry[], kind?: string) => {
 export const stepDetail = (text: string, phase?: string) =>
   phase && startsWord(text.toLowerCase(), phase) ? text.slice(phase.length).replace(/^[\s:—–-]+/, '') : text
 
-// Finished, in progress, not started; a phase left behind by going back is not started again.
-const GLYPH = { done: '◉', now: '◎', seen: '○', todo: '○' } as const
+// Reached (finished green, in progress in the accent) or not started; a phase left behind by
+// going back is not started again.
+const GLYPH = { done: '◉', now: '◉', seen: '○', todo: '○' } as const
 const TONE = { done: 'success', now: 'claude', seen: 'subtle', todo: 'subtle' } as const
 
 // An auto mark, unless the newest entry already is the same mark.
@@ -314,12 +315,10 @@ export const register: Register = on => {
   // Widths come from the layout, not from counting characters: the desktop draws a proportional
   // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
-  // │  ▰ Project Cell: [M2.5] Organic world   auto on   run 4m 18s  •  ✓ 3  ✗ 0  │
-  // │                                                                            │
-  // │  ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████     4 / 12    │
-  // │                                                                            │
-  // │  ▶ TEC-91  [M]  Cell inspector panel with live gene readout  issue 1m 48s  │
-  // │     ◉ plan ━━ ◎ work ── ○ verify ── ○ commit                               │
+  // │  Project Cell: [M2.5] Organic world     auto on   run 4m 18s  •  4 / 12  ✓ 3  ✗ 0 │
+  // │  ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ │
+  // │  TEC-91  [M]  Cell inspector panel with live gene readout    issue 1m 48s  │
+  // │     ◉ plan ━━ ◉ work ── ○ verify ── ○ commit                               │
   // │     » ui wire gene readout                                                 │
   // │                                                                            │
   // │  agents 2/5   tools 9   files 3   commits 1   last ✓ TEC-90 50s   22k tok  │
@@ -343,10 +342,15 @@ export const register: Register = on => {
     const tint = 'claude'
     // Border and padding take 6 cells. An estimate on the desktop, used only to choose what shows.
     const inner = e.props.bodyColumns - 6
-    // Full height is 11 rows. A short slot (fullscreen on a small terminal) drops the blank
-    // rows, then the footer, rather than scroll.
-    const hasGaps = !(e.props.maxRows < 11)
-    const hasFooter = !(e.props.maxRows < 9)
+    // The reported step, less the phase word it starts with; its row shows only when it says more.
+    const stages = phases(current ? list : [], current?.kind)
+    const stepNow = current ? list.findLast(one => !one.auto)?.text.trim() ?? '' : ''
+    const detail = stepDetail(stepNow, stages.find(one => one.state === 'now')?.name)
+    // Full height is 8 rows, 9 with the step row. A short slot (fullscreen on a small terminal)
+    // drops the blank row, then the footer, rather than scroll.
+    const rows = detail ? 9 : 8
+    const hasGaps = !(e.props.maxRows < rows)
+    const hasFooter = !(e.props.maxRows < rows - 1)
     const gap = () => (hasGaps ? <Text> </Text> : null)
     // Fixed segments never shrink; `fit` holds what may give way and clips it.
     const fixed = (...nodes: unknown[]) => <Box flexShrink={0}>{nodes}</Box>
@@ -363,7 +367,6 @@ export const register: Register = on => {
       <Box justifyContent="space-between">
         <Box flexShrink={1}>
           {fixed(
-            <Text color={tint} bold>▰ </Text>,
             runNow.project ? <Text bold>{runNow.project}{scopeName ? ': ' : ''}</Text> : null,
             scopeId ? <Text color="subtle">[{scopeId}] </Text> : null,
           )}
@@ -374,41 +377,45 @@ export const register: Register = on => {
           mode,
           stat('run', dur(at - runNow.startedAt)),
           <Text color="subtle">{'  •  '}</Text>,
+          total ? <Text bold>{done.length} / {total}{'  '}</Text> : <Text color="subtle" italic>scoping…{'  '}</Text>,
           <Text color={okCount ? 'success' : 'subtle'}>✓ {okCount}</Text>,
           <Text color={badCount ? 'warning' : 'subtle'}>{'  '}✗ {badCount}</Text>,
         )}
       </Box>
     )
 
-    // Solid blocks a full row high, each growing by the issues it stands for, so the bar fills
-    // what the count leaves on any surface. Gaps split the issues while each keeps about 3 cells.
+    // One row of ▬, a bar centred in its line, so space sits above and below it without a blank
+    // row. Each block grows by the issues it stands for; a run of glyphs longer than any band
+    // wraps inside a one-row box that clips the rest, so the bar fills the row on any surface.
+    // Gaps split the issues while each keeps about 3 cells. The key carries the block's colour.
     const BAR_TONE = { ok: 'success', bad: 'warning', now: tint, todo: 'subtle' } as const
     const split = !!total && total * 3 <= inner
     const blocks = total ? runBar(done.map(one => one.isDone), !!current, total, split) : [{ tone: 'todo' as const, count: 1 }]
-    const progress = (
+    const barRow = (
       <Box>
-        <Box flexGrow={1} flexShrink={1} overflow="hidden">
-          {blocks.map((one, i) => (
-            <Box key={`b${i}`} width={0} flexGrow={one.count} flexShrink={1} marginLeft={split && i ? 1 : 0} backgroundColor={BAR_TONE[one.tone]}>
-              <Text> </Text>
-            </Box>
-          ))}
-        </Box>
-        {fixed(
-          total
-            ? <Text bold>{'   '}{done.length} / {total}</Text>
-            : <Text color="subtle" italic>{'   '}scoping…</Text>,
-        )}
+        {blocks.map((one, i) => (
+          <Box
+            key={`a${i}-${BAR_TONE[one.tone]}`}
+            width={0}
+            height={1}
+            flexGrow={one.count}
+            flexShrink={1}
+            overflow="hidden"
+            marginLeft={split && i ? 1 : 0}
+          >
+            <Text color={BAR_TONE[one.tone]}>{'▬'.repeat(400)}</Text>
+          </Box>
+        ))}
       </Box>
     )
 
     // The issue timer (sized for 59m 59s) shows only while the title keeps 16 cells.
-    const idLen = current ? `▶ ${current.id}  [${current.size ?? '?'}]  `.length : 0
+    const idLen = current ? `${current.id}  [${current.size ?? '?'}]  `.length : 0
     const hasIssueTime = !!current && inner - idLen - '   issue 59m 59s'.length >= 16
     const issueRow = current ? (
       <Box justifyContent="space-between">
         <Box flexShrink={1}>
-          {fixed(<Text color={tint} bold>▶ {current.id}</Text>, <Text color="subtle">{'  '}[{current.size ?? '?'}]{'  '}</Text>)}
+          {fixed(<Text color={tint} bold>{current.id}</Text>, <Text color="subtle">{'  '}[{current.size ?? '?'}]{'  '}</Text>)}
           <Text wrap="truncate-end">{current.title}</Text>
         </Box>
         {hasIssueTime ? stat('issue', dur(at - current.startedAt)) : null}
@@ -418,9 +425,7 @@ export const register: Register = on => {
     )
 
     // Same rows in both states, so the band keeps its height between issues. A link turns solid
-    // once its phase is reached. The reported step goes on its own row, less the phase word it
-    // starts with; a blank row holds the place when there is nothing more to say.
-    const stages = phases(current ? list : [], current?.kind)
+    // once its phase is reached.
     const phaseRow = fit(
       fixed(
         <Text>{'   '}</Text>,
@@ -436,9 +441,7 @@ export const register: Register = on => {
         ]),
       ),
     )
-    const stepNow = current ? list.findLast(one => !one.auto)?.text.trim() ?? '' : ''
-    const detail = stepDetail(stepNow, stages.find(one => one.state === 'now')?.name)
-    const stepRow = <Text color="subtle" italic wrap="truncate-end">{detail ? `     » ${detail}` : ' '}</Text>
+    const stepRow = detail ? <Text color="subtle" italic wrap="truncate-end">{`     » ${detail}`}</Text> : null
 
     // Stats, then the last result, show whole or not at all, so the footer never ends in a stub.
     // The counts are a terminal estimate; on the desktop the group also clips before the tokens.
@@ -465,9 +468,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="promptBorder" paddingX={2}>
         {header}
-        {gap()}
-        {progress}
-        {gap()}
+        {barRow}
         {issueRow}
         {phaseRow}
         {stepRow}
