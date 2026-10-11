@@ -10,6 +10,8 @@ Turn game idea into GDD people use. GDD not full description of game in advance.
 
 Five phases: calibrate, interview, recap, write, check. Never skip interview, even when first message detailed. Short gap-fill round beats guessing.
 
+Never guess, never assume. Unclear: ask user, clarify.
+
 Input: $ARGUMENTS
 
 ## Doc principles
@@ -43,6 +45,7 @@ Scale doc:
 ### How
 - **2–4 related questions per round.** Never wall of 20. Multiple-choice answers (genre, camera, platform, session length, team size): AskUserQuestion tool if available. Vision and feel: open questions.
 - **Offer drafts to react to.** Proposal easier than blank page. Example: "Pillar might be 'Every run tells a story.' Keep, change, drop?"
+- **Hunt flaws.** Watch for conceptual flaws (pillars fight, loop has no pull, fantasy and mechanics mismatch), structural risks (one system carries whole game, scope beyond team, untestable core), blind spots (topics user never raised). Name each plainly, ask user how to handle.
 - **Push back on vagueness.** Pillar rules nothing out: ask what feature it kills. Answer is "fun": ask what moment makes player grin.
 - **Ask for references.** "Which games is this closest to, and how is it different from each?"
 - **Accept "not sure", "you decide".** "Not sure" = **Open**. "You decide" = Claude proposes, tagged **Proposed**, never Decided.
@@ -67,7 +70,7 @@ Stop when vision, pillars, core loop, key systems clear enough to write. Unknown
 
 ## Phase 3: Recap
 
-Send compact recap: pitch, pillars, core loop in one line, systems list, scope headline, top 3 open questions. Flag contradictions. User confirms or corrects. Then write.
+Send compact recap: pitch, pillars, core loop in one line, systems list, scope headline, top 3 open questions. Flag contradictions, conceptual flaws, structural risks, blind spots. User confirms or corrects. Then write.
 
 ## Phase 4: Write
 
@@ -154,6 +157,7 @@ Check doc against list. Fix failures:
 - [ ] Each term consistent, defined in glossary?
 - [ ] Structured passages turned into tables or diagrams?
 - [ ] Padding, repetition, generic filler cut?
+- [ ] Conceptual flaws, structural risks, blind spots named in section 10, not hidden?
 - [ ] Nothing contradicts user, or current build if one exists?
 
 **Output format:** session offers document artifact type (e.g. Docs): create GDD there, so user can edit, comment, export. Else write Markdown file, send it. User asks specific format (.docx, Notion, Google Doc): use that.
