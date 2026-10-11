@@ -1,10 +1,10 @@
 {
   "name": "studio",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "license": "CC-BY-NC-ND-4.0",
-  "repository": "https://github.com/2EU5/devkit",
-  "homepage": "https://github.com/2EU5/devkit",
-  "description": "Game dev workflows: GDD interviews, audits, decision councils, and a Unity C# / Linear / Git ship loop.",
+  "repository": "https://github.com/2EU5/studio",
+  "homepage": "https://github.com/2EU5/studio",
+  "description": "Game dev workflows: GDD interviews, plan digests, audits, decision councils, verification, and a Unity C# / Linear / Git ship loop.",
   "author": {
     "name": "Zeus"
   },

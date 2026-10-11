@@ -4,16 +4,18 @@ Claude Code plugin for game dev workflows.
 
 | Skill | Command | What it does |
 |-------|---------|--------------|
-| ship | `/studio:ship [auto] [task]` | Unity C# loop: takes Linear Backlog issues, implements them in the Unity Editor, verifies, commits and pushes. Asks you when it needs you; with `auto` it never asks and decides itself. |
+| ship | `/studio:ship [auto] [digest] [task]` | Unity C# loop: takes Linear Backlog issues, implements them in the Unity Editor, verifies, commits and pushes. Asks you when it needs you; with `auto` it never asks and decides itself. With `digest`, or when the project has no issues yet but has a GDD, it runs digest on the GDD first. |
 | gdd | `/studio:gdd [idea or GDD]` | Interviews you about a game idea, then writes or updates a game design document. |
 | audit | `/studio:audit <subject>` | Audits a skill, plan, design or doc and gives a checked, prioritized fix list. Not for code diffs (use `code-review`). |
 | council | `/studio:council <decision>` or "help me decide between A or B" | Stress-tests a decision with a fixed council (Contrarian, First-Principles Thinker, Expansionist, Outsider, Executor) who debate it, then synthesizes tradeoffs and next steps. |
+| verify | `/studio:verify [issue or criteria]` | Verifies Unity work in the Editor: runs EditMode and PlayMode tests, checks the console, screenshots visual work, and maps each acceptance criterion to pass, fail or needs user with evidence. |
+| digest | `/studio:digest <doc or issue>` | Breaks a GDD or plan doc into Linear milestones and issues in build order, with acceptance criteria and sizes, ready for ship. Also splits one large issue into sub-issues. |
 | handoff | `/studio:handoff [next focus]` | Compacts the current conversation into a handoff doc in your OS temp folder so a fresh session can pick up the work. |
 
 ## Install
 
 ```
-/plugin marketplace add 2EU5/devkit
+/plugin marketplace add 2EU5/studio
 /plugin install studio@studio
 ```
 

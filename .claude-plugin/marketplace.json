@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "studio",
-      "description": "Game dev workflows: GDD interviews, audits, decision councils, and a Unity C# / Linear / Git ship loop.",
+      "description": "Game dev workflows: GDD interviews, plan digests, audits, decision councils, verification, and a Unity C# / Linear / Git ship loop.",
       "source": "./",
       "category": "productivity"
     }
