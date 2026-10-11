@@ -18,7 +18,7 @@ const SPAWN = {
 const band = async ($: Parameters<TestBody>[0], bodyColumns = 100, maxRows?: number, surface: 'terminal' | 'desktop' = 'terminal') => {
   const props = { hasSurvey: false, bodyColumns, maxRows } as RenderPropsOf['AbovePrompt']
   const ui = await $.ui.mount({ plugin: 'studio', surface, component: 'AbovePrompt', props })
-  const text = (await ui.findAll({ type: 'Text' })).map(one => (/^([▬])\1*$/.test(one.text) ? one.text[0] : one.text)).join('|')
+  const text = (await ui.findAll({ type: 'Text' })).map(one => (/^(━)\1*$/.test(one.text) ? one.text[0] : one.text)).join('|')
   await ui.unmount()
   return text
 }
@@ -53,8 +53,8 @@ test('band shows run and milestone on one row, then the bar, issue, phases and w
     const text = await band($, 100, undefined, surface)
     // header: project, milestone id and name; mode, run time, count, done and needs-input
     expect(text).toMatch(/^Cell: \|\[M2\.5\] \|Organic world\| {3}\|auto off\| {3}run \|12m 30s\| {2}• {2}\|0 \/ 4 {2}\|✓ 0\| {2}✗ 0\|/)
-    // run bar: four blocks on one row, then the issue
-    expect(text).toMatch(/✗ 0(\|▬){4}\|GAME-42/)
+    // run bar: four blocks on one row (glyphs on the terminal, filled boxes elsewhere), then the issue
+    expect(text).toMatch(surface === 'terminal' ? /✗ 0(\|━){4}\|GAME-42/ : /✗ 0\|GAME-42/)
     expect(await blocks($, 100, surface)).toBe('claudex1 +subtlex1 +subtlex1 +subtlex1')
     // issue and its time, the tracker, no step row ("verify" says nothing more), then a blank row
     expect(text).toMatch(/\|GAME-42\| {2}\[M\] {2}\|Jump\| {3}issue \|12m 30s\| {3}\|◉ plan\| ━━ \|◉ work\| ━━ \|◉ verify\| ── \|○ commit\| \|agents/)
@@ -236,10 +236,10 @@ test('on the desktop the layout sizes the bar and clips what gives way, never th
   const ui = await $.ui.mount({ plugin: 'studio', surface: 'desktop', component: 'AbovePrompt', props })
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as { props: Record<string, unknown> }[]
   await ui.unmount()
-  // the bar's blocks are one-row boxes that clip their glyphs: 2 blocks
-  expect(boxes.filter(one => one.props.height === 1 && one.props.overflow === 'hidden')).toHaveLength(2)
-  // the tracker and the footer stats clip too
-  expect(boxes.filter(one => one.props.flexShrink === 1 && one.props.overflow === 'hidden').length).toBeGreaterThanOrEqual(3)
+  // the bar's blocks are filled boxes 40% of the row high, no glyphs: 2 blocks
+  expect(boxes.filter(one => one.props.height === '40%' && one.props.backgroundColor)).toHaveLength(2)
+    // the tracker and the footer stats clip too
+  expect(boxes.filter(one => one.props.flexShrink === 1 && one.props.overflow === 'hidden')).toHaveLength(2)
   const text = await band($, 100, undefined, 'desktop')
   expect(text).toMatch(/\|0 \/ 41 {2}\|/)
   expect(text).toMatch(/\|○ commit\| {5}» M1 gate seeds: 2, 3, 12345\|/)
@@ -280,7 +280,7 @@ test('picking state keeps the phase row; scoping shows before a total', async ($
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   const text = await band($)
-  expect(text).toMatch(/^m1\| {3}\|auto off\|.*\|scoping… {2}\|✓ 0\| {2}✗ 0\|▬\|picking/)
+  expect(text).toMatch(/^m1\| {3}\|auto off\|.*\|scoping… {2}\|✓ 0\| {2}✗ 0\|━\|picking/)
   expect(await blocks($)).toBe('subtlex1')
   expect(text).toMatch(/picking the next issue…\| {3}\|○ plan\| ── \|○ work\| ── \|○ verify\| ── \|○ commit\| \|/)
 })
@@ -289,7 +289,7 @@ test('a short slot drops the blank row, then the footer; a step row adds one', a
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   const full = await band($, 100, 8)
-  expect(full).toMatch(/✗ 0\|▬\|picking/)
+  expect(full).toMatch(/✗ 0\|━\|picking/)
   expect(full).toMatch(/commit\| \|agents 0\/5/)
   const short = await band($, 100, 7)
   expect(short).toMatch(/commit\|agents 0\/5/)

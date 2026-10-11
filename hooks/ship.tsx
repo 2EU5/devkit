@@ -316,7 +316,7 @@ export const register: Register = on => {
   // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
   // │  Project Cell: [M2.5] Organic world     auto on   run 4m 18s  •  4 / 12  ✓ 3  ✗ 0 │
-  // │  ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ ▬▬▬▬▬ │
+  // │  ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ │
   // │  TEC-91  [M]  Cell inspector panel with live gene readout    issue 1m 48s  │
   // │     ◉ plan ━━ ◉ work ── ○ verify ── ○ commit                               │
   // │     » ui wire gene readout                                                 │
@@ -384,28 +384,28 @@ export const register: Register = on => {
       </Box>
     )
 
-    // One row of ▬, a bar centred in its line, so space sits above and below it without a blank
-    // row. Each block grows by the issues it stands for; a run of glyphs longer than any band
-    // wraps inside a one-row box that clips the rest, so the bar fills the row on any surface.
-    // Gaps split the issues while each keeps about 3 cells. The key carries the block's colour.
+    // One row, the bar centred in it, so space sits above and below without a blank row. Each block
+    // grows by the issues it stands for. The terminal draws ━, which joins cell to cell: a run longer
+    // than any band, clipped by a one-row box. Other surfaces draw text in a proportional font,
+    // where glyphs leave gaps and an overlong run wraps, so there the block is a filled box 40% of
+    // the row high. Gaps split the issues while each keeps about 3 cells. The key carries the colour.
     const BAR_TONE = { ok: 'success', bad: 'warning', now: tint, todo: 'subtle' } as const
     const split = !!total && total * 3 <= inner
     const blocks = total ? runBar(done.map(one => one.isDone), !!current, total, split) : [{ tone: 'todo' as const, count: 1 }]
+    const isTerminal = e.surface === 'terminal'
     const barRow = (
-      <Box>
-        {blocks.map((one, i) => (
-          <Box
-            key={`a${i}-${BAR_TONE[one.tone]}`}
-            width={0}
-            height={1}
-            flexGrow={one.count}
-            flexShrink={1}
-            overflow="hidden"
-            marginLeft={split && i ? 1 : 0}
-          >
-            <Text color={BAR_TONE[one.tone]}>{'▬'.repeat(400)}</Text>
-          </Box>
-        ))}
+      <Box height={1} alignItems="center">
+        {blocks.map((one, i) => {
+          const color = BAR_TONE[one.tone]
+          const layout = { key: `a${i}-${color}`, width: 0, flexGrow: one.count, flexShrink: 1, marginLeft: split && i ? 1 : 0 }
+          return isTerminal ? (
+            <Box {...layout} height={1} overflow="hidden">
+              <Text color={color}>{'━'.repeat(400)}</Text>
+            </Box>
+          ) : (
+            <Box {...layout} height="40%" backgroundColor={color} />
+          )
+        })}
       </Box>
     )
 
