@@ -35,7 +35,7 @@ const blocks = async ($: Parameters<TestBody>[0], bodyColumns = 100, surface: 't
     .join(' ')
 }
 
-test('band shows run, milestone, issue, phases and work', async ($, on) => {
+test('band shows run and milestone on one row, then the bar, issue, phases and work', async ($, on) => {
   const clock = mock.clock(on, { now: 0 })
   on('turn.step', async function* () {
     return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'm' } } as never
@@ -51,10 +51,8 @@ test('band shows run, milestone, issue, phases and work', async ($, on) => {
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const text = await band($, 100, undefined, surface)
-    // header: project and run time
-    expect(text).toMatch(/^▰ Ship: \|Cell\| {3}\|auto off\| {3}run \|12m 30s\|/)
-    // milestone: dim id, name, done and needs-input
-    expect(text).toMatch(/\|Milestone: \|M2\.5 {3}\|Organic world\| {3}✓ 0\| {3}✗ 0\|/)
+    // header: project, milestone id and name; mode, run time, done and needs-input
+    expect(text).toMatch(/^▰ \|Cell: \|\[M2\.5\] \|Organic world\| {3}\|auto off\| {3}run \|12m 30s\| {2}• {2}\|✓ 0\| {2}✗ 0\|/)
     // run bar: four blocks, then the count, then a blank row
     expect(text).toMatch(/✗ 0(\| ){4}\| {3}0 \/ 4\| \|▶/)
     expect(await blocks($, 100, surface)).toBe('claudex1 +subtlex1 +subtlex1 +subtlex1')
@@ -73,7 +71,7 @@ test('done issue lands in counters and last result', async ($, on) => {
   await $.tool.call(status({ action: 'issue_done', text: 'ok' }))
   const text = await band($)
   expect(text).toMatch(/picking the next issue…/)
-  expect(text).toMatch(/ {3}✓ 1\| {3}✗ 0/)
+  expect(text).toMatch(/\|✓ 1\| {2}✗ 0/)
   expect(text).toMatch(/ {3}last ✓ GAME-1 50s/)
 })
 
@@ -113,13 +111,13 @@ test('run_end and an aborted main turn both end the run', async ($, on) => {
   on('ui.toast', () => ({ value: undefined }))
   on('turn.complete', () => ({ text: '' }))
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
-  expect(await band($)).toMatch(/▰ Ship/)
+  expect(await band($)).toMatch(/^▰ /)
   await $.tool.call(status({ action: 'run_end' }))
-  expect(await band($)).not.toMatch(/▰ Ship/)
+  expect(await band($)).not.toMatch(/^▰ /)
 
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   await $.turn.complete({ reason: 'aborted', text: '' } as never)
-  expect(await band($)).not.toMatch(/▰ Ship/)
+  expect(await band($)).not.toMatch(/^▰ /)
 })
 
 const SESSION = { cwd: '.', surface: 'terminal', isInteractive: true } as const
@@ -162,7 +160,7 @@ test('a run with no progress for hours goes stale', async ($, on) => {
   // The session (and its 1 s clock) starts late so the test does not tick through 5 hours.
   await $.session.start(SESSION)
   await clock.advance(1000)
-  expect(await band($)).not.toMatch(/▰ Ship/)
+  expect(await band($)).not.toMatch(/^▰ /)
 })
 
 test('abort counts as needs input; total can grow', async ($, on) => {
@@ -171,7 +169,7 @@ test('abort counts as needs input; total can grow', async ($, on) => {
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S', total: 3 }))
   await $.tool.call(status({ action: 'issue_abort', text: 'stuck' }))
   const text = await band($)
-  expect(text).toMatch(/ {3}✓ 0\| {3}✗ 1/)
+  expect(text).toMatch(/\|✓ 0\| {2}✗ 1/)
   expect(text).toMatch(/ {3}last ✗ G-1 0s/)
   expect(text).toMatch(/ {3}1 \/ 3\|/)
   expect(await blocks($)).toBe('warningx1 +subtlex1 +subtlex1')
@@ -274,14 +272,14 @@ test('band yields to a survey', async ($, on) => {
   on('ui.render', ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   const ui = await $.ui.mount({ plugin: 'studio', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: true, bodyColumns: 100 } as RenderPropsOf['AbovePrompt'] })
-  expect((await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')).not.toMatch(/▰ Ship/)
+  expect((await ui.findAll({ type: 'Text' })).map(one => one.text).join('|')).not.toMatch(/^▰ /)
 })
 
 test('picking state keeps the phase row; scoping shows before a total', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   const text = await band($)
-  expect(text).toMatch(/\|Milestone: \|m1\| {3}✓ 0\| {3}✗ 0\| \| {3}scoping…\|/)
+  expect(text).toMatch(/^▰ \|m1\| {3}\|auto off\|.* {2}✗ 0\| \| {3}scoping…\|/)
   expect(await blocks($)).toBe('subtlex1')
   expect(text).toMatch(/picking the next issue…\| {3}\|○ plan\| ── \|○ work\| ── \|○ verify\| ── \|○ commit\| \|/)
 })
@@ -289,13 +287,13 @@ test('picking state keeps the phase row; scoping shows before a total', async ($
 test('a short slot drops the blank rows, then the footer', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
-  const full = await band($, 100, 11)
+  const full = await band($, 100, 10)
   expect(full).toMatch(/scoping…\| \|picking/)
   expect(full).toMatch(/commit\| \| \|agents 0\/5/)
-  const short = await band($, 100, 10)
+  const short = await band($, 100, 9)
   expect(short).toMatch(/scoping…\|picking/)
   expect(short).toMatch(/commit\| \|agents 0\/5/)
-  const shorter = await band($, 100, 8)
+  const shorter = await band($, 100, 7)
   expect(shorter).not.toMatch(/agents/)
   expect(shorter).toMatch(/picking the next issue…/)
 })
@@ -307,25 +305,25 @@ test('a failed main turn ends the run; an answer (waiting on agents) does not', 
   on('turn.complete', () => ({ text: '' }))
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   await $.turn.complete({ agentId: 'a1', reason: 'answer', text: '' } as never)
-  expect(await band($)).toMatch(/▰ Ship/)
+  expect(await band($)).toMatch(/^▰ /)
   await $.turn.complete({ reason: 'answer', text: '' } as never)
-  expect(await band($)).toMatch(/▰ Ship/)
+  expect(await band($)).toMatch(/^▰ /)
   await $.turn.complete({ reason: 'error', text: '' } as never)
-  expect(await band($)).not.toMatch(/▰ Ship/)
+  expect(await band($)).not.toMatch(/^▰ /)
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   await $.turn.complete({ reason: 'refusal', text: '' } as never)
-  expect(await band($)).not.toMatch(/▰ Ship/)
+  expect(await band($)).not.toMatch(/^▰ /)
 })
 
 test('issue_start in a new milestone moves the scope', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'M1 · Core', total: 3 }))
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
-  expect(await band($)).toMatch(/\|Milestone: \|M1 {3}\|Core\|/)
+  expect(await band($)).toMatch(/\|\[M1\] \|Core\|/)
   await $.tool.call(status({ action: 'issue_done', text: 'done note' }))
-  expect(await band($)).toMatch(/\|Milestone: \|M1 {3}\|Core\|/)
+  expect(await band($)).toMatch(/\|\[M1\] \|Core\|/)
   await $.tool.call(status({ action: 'issue_start', issue: 'G-2', title: 'B', size: 'S', text: 'M2 · Polish' }))
-  expect(await band($)).toMatch(/\|Milestone: \|M2 {3}\|Polish\|.* 1 \/ 3\|/)
+  expect(await band($)).toMatch(/\|\[M2\] \|Polish\|.* 1 \/ 3\|/)
 })
 
 test('phase words match whole words only', async ($, on) => {
@@ -373,7 +371,7 @@ test('a PowerShell commit counts', async ($, on) => {
 test('auto mode shows an auto on badge; attended says auto off', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', project: 'Cell', text: 'm1', total: 2, auto: true }))
-  expect(await band($)).toMatch(/\|Cell\| {3}\| auto on \| {3}run /)
+  expect(await band($)).toMatch(/\|Cell: \|m1\| {3}\| auto on \| {3}run /)
   await $.tool.call(status({ action: 'run_start', project: 'Cell', text: 'm1', total: 2 }))
   expect(await band($)).toMatch(/\|auto off\|/)
 })

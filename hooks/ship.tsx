@@ -313,8 +313,7 @@ export const register: Register = on => {
   // Widths come from the layout, not from counting characters: the desktop draws a proportional
   // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
-  // │  ▰ Ship: Project Cell                               auto on    run 4m 18s  │
-  // │  Milestone: M2.5   Organic world                               ✓ 3   ✗ 0   │
+  // │  ▰ Project Cell: [M2.5] Organic world   auto on   run 4m 18s  •  ✓ 3  ✗ 0  │
   // │  ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████ ████     4 / 12    │
   // │                                                                            │
   // │  ▶ TEC-91  [M]  Cell inspector panel with live gene readout  issue 1m 48s  │
@@ -342,10 +341,10 @@ export const register: Register = on => {
     const tint = 'claude'
     // Border and padding take 6 cells. An estimate on the desktop, used only to choose what shows.
     const inner = e.props.bodyColumns - 6
-    // Full height is 11 rows. A short slot (fullscreen on a small terminal) drops the blank
+    // Full height is 10 rows. A short slot (fullscreen on a small terminal) drops the blank
     // rows, then the footer, rather than scroll.
-    const hasGaps = !(e.props.maxRows < 11)
-    const hasFooter = !(e.props.maxRows < 9)
+    const hasGaps = !(e.props.maxRows < 10)
+    const hasFooter = !(e.props.maxRows < 8)
     const gap = () => (hasGaps ? <Text> </Text> : null)
     // Fixed segments never shrink; `fit` holds what may give way and clips it.
     const fixed = (...nodes: unknown[]) => <Box flexShrink={0}>{nodes}</Box>
@@ -355,27 +354,26 @@ export const register: Register = on => {
 
     // Auto on is the loud state: nobody is there to answer, so it reads from across the room.
     const mode = runNow.isAuto ? <Text color="autoAccept" inverse bold> auto on </Text> : <Text color="subtle">auto off</Text>
+    // One row: project and milestone left (the milestone name gives way first), then mode, run
+    // time and the done / needs-input tally right.
+    const [scopeId, scopeName] = splitScope(runNow.scope)
     const header = (
       <Box justifyContent="space-between">
         <Box flexShrink={1}>
-          {fixed(<Text color={tint} bold>{runNow.project ? '▰ Ship: ' : '▰ Ship'}</Text>)}
-          {runNow.project ? <Text bold wrap="truncate-end">{runNow.project}</Text> : null}
-        </Box>
-        {fixed(<Text>{'   '}</Text>, mode, stat('run', dur(at - runNow.startedAt)))}
-      </Box>
-    )
-
-    const [scopeId, scopeName] = splitScope(runNow.scope)
-    const milestone = (
-      <Box justifyContent="space-between">
-        <Box flexShrink={1}>
-          {runNow.scope ? fixed(<Text color="subtle">Milestone: </Text>) : null}
-          {scopeId ? fixed(<Text color="subtle">{scopeId}{'   '}</Text>) : null}
+          {fixed(
+            <Text color={tint} bold>▰ </Text>,
+            runNow.project ? <Text bold>{runNow.project}{scopeName ? ': ' : ''}</Text> : null,
+            scopeId ? <Text color="subtle">[{scopeId}] </Text> : null,
+          )}
           <Text wrap="truncate-end">{scopeName}</Text>
         </Box>
         {fixed(
-          <Text color={okCount ? 'success' : 'subtle'}>{'   '}✓ {okCount}</Text>,
-          <Text color={badCount ? 'warning' : 'subtle'}>{'   '}✗ {badCount}</Text>,
+          <Text>{'   '}</Text>,
+          mode,
+          stat('run', dur(at - runNow.startedAt)),
+          <Text color="subtle">{'  •  '}</Text>,
+          <Text color={okCount ? 'success' : 'subtle'}>✓ {okCount}</Text>,
+          <Text color={badCount ? 'warning' : 'subtle'}>{'  '}✗ {badCount}</Text>,
         )}
       </Box>
     )
@@ -465,7 +463,6 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" borderStyle="round" borderColor={tint} paddingX={2}>
         {header}
-        {milestone}
         {progress}
         {gap()}
         {issueRow}
