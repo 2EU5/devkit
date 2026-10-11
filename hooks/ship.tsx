@@ -315,13 +315,13 @@ export const register: Register = on => {
   // Widths come from the layout, not from counting characters: the desktop draws a proportional
   // font, so a row sized in cells there overflows. Only what may give way shrinks.
   // ╭────────────────────────────────────────────────────────────────────────────╮
-  // │  [Project Cell] M2.5 Organic world     auto on   run 4m 18s  •  4 / 12  ✓ 3  ✗ 0 │
+  // │  Project Cell  M2.5 Organic world                              auto on   4 / 12  │
   // │  ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ ━━━━━ │
   // │  TEC-91  [M]  Cell inspector panel with live gene readout    issue 1m 48s  │
   // │     ◉ plan ━━ ◉ work ── ○ verify ── ○ commit                               │
   // │     » ui wire gene readout                                                 │
   // │                                                                            │
-  // │  agents 2/5   tools 9   files 3   commits 1   last ✓ TEC-90 50s   22k tok  │
+  // │  agents 2/5   tools 9   files 3   commits 1   last ✓ TEC-90 50s   run 4m 18s  22k tok │
   // ╰────────────────────────────────────────────────────────────────────────────╯
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const runNow = await read($, run)
@@ -360,26 +360,24 @@ export const register: Register = on => {
 
     // Auto on is the loud state: nobody is there to answer, so it reads from across the room.
     const mode = runNow.isAuto ? <Text color="autoAccept" inverse bold> auto on </Text> : <Text color="subtle">auto off</Text>
-    // One row: project and milestone left (the milestone name gives way first), then mode, run
-    // time and the done / needs-input tally right.
+    // Where the run is and how far along: project bold, milestone dim (the issue title is the
+    // brightest line in the band; the milestone name gives way first), then mode and the count
+    // over the end of the bar it describes. Needs input shows only once something needs it.
     const [scopeId, scopeName] = splitScope(runNow.scope)
     const header = (
       <Box justifyContent="space-between">
         <Box flexShrink={1}>
           {fixed(
-            runNow.project ? <Text bold>[{runNow.project}]{scopeName ? ' ' : ''}</Text> : null,
+            runNow.project ? <Text bold>{runNow.project}{runNow.scope ? '  ' : ''}</Text> : null,
             scopeId ? <Text color="subtle">{scopeId} </Text> : null,
           )}
-          <Text wrap="truncate-end">{scopeName}</Text>
+          <Text color="subtle" wrap="truncate-end">{scopeName}</Text>
         </Box>
         {fixed(
           <Text>{'   '}</Text>,
           mode,
-          stat('run', dur(at - runNow.startedAt)),
-          <Text color="subtle">{'  •  '}</Text>,
-          total ? <Text bold>{done.length} / {total}{'  '}</Text> : <Text color="subtle" italic>scoping…{'  '}</Text>,
-          <Text color={okCount ? 'success' : 'subtle'}>✓ {okCount}</Text>,
-          <Text color={badCount ? 'warning' : 'subtle'}>{'  '}✗ {badCount}</Text>,
+          badCount ? <Text color="warning">{'   '}{badCount} needs input</Text> : null,
+          total ? <Text bold>{'   '}{done.length} / {total}</Text> : <Text color="subtle" italic>{'   '}scoping…</Text>,
         )}
       </Box>
     )
@@ -448,8 +446,9 @@ export const register: Register = on => {
     const agentsText = `agents ${live.length}/${MAX_AGENTS}`
     const statsText = current ? `   tools ${w.tools}   files ${w.files.length}   commits ${w.commits}` : ''
     const lastText = last ? `   last ${last.isDone ? '✓' : '✗'} ${last.id} ${dur(last.ms)}` : ''
+    const runText = `   run ${dur(at - runNow.startedAt)}`
     const tokText = `   ${fmtTokens(runNow.tokens)} tok`
-    const room = inner - agentsText.length - tokText.length
+    const room = inner - agentsText.length - runText.length - tokText.length
     const hasStats = statsText.length <= room
     const hasLast = lastText.length <= room - (hasStats ? statsText.length : 0)
     const footer = hasFooter ? (
@@ -461,7 +460,7 @@ export const register: Register = on => {
             last && hasLast ? <Text color={last.isDone ? 'success' : 'warning'}>{lastText}</Text> : null,
           ),
         )}
-        {fixed(<Text color="subtle">{tokText}</Text>)}
+        {fixed(stat('run', dur(at - runNow.startedAt)), <Text color="subtle">{tokText}</Text>)}
       </Box>
     ) : null
 

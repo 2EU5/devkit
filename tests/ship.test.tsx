@@ -51,15 +51,15 @@ test('band shows run and milestone on one row, then the bar, issue, phases and w
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const text = await band($, 100, undefined, surface)
-    // header: project, milestone id and name; mode, run time, count, done and needs-input
-    expect(text).toMatch(/^\[Cell\] \|M2\.5 \|Organic world\| {3}\|auto off\| {3}run \|12m 30s\| {2}• {2}\|0 \/ 4 {2}\|✓ 0\| {2}✗ 0\|/)
+    // header: project, dim milestone id and name; mode and count (no needs input yet)
+    expect(text).toMatch(/^Cell {2}\|M2\.5 \|Organic world\| {3}\|auto off\| {3}0 \/ 4\|/)
     // run bar: four blocks on one row (glyphs on the terminal, filled boxes elsewhere), then the issue
-    expect(text).toMatch(surface === 'terminal' ? /✗ 0(\|━){4}\|GAME-42/ : /✗ 0\|GAME-42/)
+    expect(text).toMatch(surface === 'terminal' ? / 0 \/ 4(\|━){4}\|GAME-42/ : / 0 \/ 4\|GAME-42/)
     expect(await blocks($, 100, surface)).toBe('claudex1 +subtlex1 +subtlex1 +subtlex1')
     // issue and its time, the tracker, no step row ("verify" says nothing more), then a blank row
     expect(text).toMatch(/\|GAME-42\| {2}\[M\] {2}\|Jump\| {3}issue \|12m 30s\| {3}\|◉ plan\| ━━ \|◉ work\| ━━ \|◉ verify\| ── \|○ commit\| \|agents/)
-    // footer: agents, work stats and run tokens
-    expect(text).toMatch(/\|agents 0\/5\| {3}tools 0 {3}files 0 {3}commits 0\| {3}1\.5k tok$/)
+    // footer: agents and work stats; run time and tokens
+    expect(text).toMatch(/\|agents 0\/5\| {3}tools 0 {3}files 0 {3}commits 0\| {3}run \|12m 30s\| {3}1\.5k tok$/)
   }
 })
 
@@ -71,7 +71,7 @@ test('done issue lands in counters and last result', async ($, on) => {
   await $.tool.call(status({ action: 'issue_done', text: 'ok' }))
   const text = await band($)
   expect(text).toMatch(/picking the next issue…/)
-  expect(text).toMatch(/\|✓ 1\| {2}✗ 0/)
+  expect(text).not.toMatch(/needs input/)
   expect(text).toMatch(/ {3}last ✓ GAME-1 50s/)
 })
 
@@ -143,10 +143,10 @@ test('timers share one format: seconds, minutes, hours', async ($, on) => {
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'L' }))
   await clock.advance(60_000 + 48_000)
   await $.tool.call(status({ action: 'step', text: 'plan' }))
-  expect(await band($)).toMatch(/run \|6m 00s\|.*issue \|1m 48s\|/)
+  expect(await band($)).toMatch(/issue \|1m 48s\|.*run \|6m 00s\|/)
   await clock.advance(60 * 60_000)
   await $.tool.call(status({ action: 'step', text: 'code' }))
-  expect(await band($)).toMatch(/run \|1h 06m\|.*issue \|1h 01m\|/)
+  expect(await band($)).toMatch(/issue \|1h 01m\|.*run \|1h 06m\|/)
 })
 
 test('a run with no progress for hours goes stale', async ($, on) => {
@@ -169,9 +169,8 @@ test('abort counts as needs input; total can grow', async ($, on) => {
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S', total: 3 }))
   await $.tool.call(status({ action: 'issue_abort', text: 'stuck' }))
   const text = await band($)
-  expect(text).toMatch(/\|✓ 0\| {2}✗ 1/)
+  expect(text).toMatch(/\|auto off\| {3}1 needs input\| {3}1 \/ 3\|/)
   expect(text).toMatch(/ {3}last ✗ G-1 0s/)
-  expect(text).toMatch(/\|1 \/ 3 {2}\|/)
   expect(await blocks($)).toBe('warningx1 +subtlex1 +subtlex1')
 })
 
@@ -221,7 +220,7 @@ test('the run bar is a block per issue while each keeps 3 cells, else merged run
   await $.tool.call(status({ action: 'run_start', project: 'Project Cell', text: 'M2.5 · Organic world', total: 10 }))
   expect(await blocks($, 120)).toBe(['subtlex1', ...Array(9).fill('+subtlex1')].join(' '))
   expect(await blocks($, 30)).toBe('subtlex10')
-  expect(await band($, 30)).toMatch(/\|0 \/ 10 {2}\|/)
+  expect(await band($, 30)).toMatch(/ {3}0 \/ 10\|/)
   // a long queue: the issue in progress, then the rest as one run
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S', total: 41 }))
   expect(await blocks($, 76)).toBe('claudex1 subtlex40')
@@ -241,7 +240,7 @@ test('on the desktop the layout sizes the bar and clips what gives way, never th
     // the tracker and the footer stats clip too
   expect(boxes.filter(one => one.props.flexShrink === 1 && one.props.overflow === 'hidden')).toHaveLength(2)
   const text = await band($, 100, undefined, 'desktop')
-  expect(text).toMatch(/\|0 \/ 41 {2}\|/)
+  expect(text).toMatch(/ {3}0 \/ 41\|/)
   expect(text).toMatch(/\|○ commit\| {5}» M1 gate seeds: 2, 3, 12345\|/)
   expect(text).toMatch(/ {3}0 tok$/)
 })
@@ -263,9 +262,9 @@ test('narrow footer drops the stats, then the last result, never cuts them', asy
   await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
   await $.tool.call(status({ action: 'issue_done' }))
   await $.tool.call(status({ action: 'issue_start', issue: 'G-2', title: 'B', size: 'S' }))
-  expect(await band($, 100)).toMatch(/\|agents 0\/5\| {3}tools 0 {3}files 0 {3}commits 0\| {3}last ✓ G-1 0s\| {3}0 tok$/)
-  expect(await band($, 50)).toMatch(/\|agents 0\/5\| {3}last ✓ G-1 0s\| {3}0 tok$/)
-  expect(await band($, 30)).toMatch(/\|agents 0\/5\| {3}0 tok$/)
+  expect(await band($, 100)).toMatch(/\|agents 0\/5\| {3}tools 0 {3}files 0 {3}commits 0\| {3}last ✓ G-1 0s\| {3}run \|0s\| {3}0 tok$/)
+  expect(await band($, 60)).toMatch(/\|agents 0\/5\| {3}last ✓ G-1 0s\| {3}run \|0s\| {3}0 tok$/)
+  expect(await band($, 36)).toMatch(/\|agents 0\/5\| {3}run \|0s\| {3}0 tok$/)
 })
 
 test('band yields to a survey', async ($, on) => {
@@ -280,7 +279,7 @@ test('picking state keeps the phase row; scoping shows before a total', async ($
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   const text = await band($)
-  expect(text).toMatch(/^m1\| {3}\|auto off\|.*\|scoping… {2}\|✓ 0\| {2}✗ 0\|━\|picking/)
+  expect(text).toMatch(/^m1\| {3}\|auto off\| {3}scoping…\|━\|picking/)
   expect(await blocks($)).toBe('subtlex1')
   expect(text).toMatch(/picking the next issue…\| {3}\|○ plan\| ── \|○ work\| ── \|○ verify\| ── \|○ commit\| \|/)
 })
@@ -289,7 +288,7 @@ test('a short slot drops the blank row, then the footer; a step row adds one', a
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', text: 'm1' }))
   const full = await band($, 100, 8)
-  expect(full).toMatch(/✗ 0\|━\|picking/)
+  expect(full).toMatch(/scoping…\|━\|picking/)
   expect(full).toMatch(/commit\| \|agents 0\/5/)
   const short = await band($, 100, 7)
   expect(short).toMatch(/commit\|agents 0\/5/)
@@ -328,7 +327,7 @@ test('issue_start in a new milestone moves the scope', async ($, on) => {
   await $.tool.call(status({ action: 'issue_done', text: 'done note' }))
   expect(await band($)).toMatch(/^M1 \|Core\|/)
   await $.tool.call(status({ action: 'issue_start', issue: 'G-2', title: 'B', size: 'S', text: 'M2 · Polish' }))
-  expect(await band($)).toMatch(/^M2 \|Polish\|.*\|1 \/ 3 {2}\|/)
+  expect(await band($)).toMatch(/^M2 \|Polish\|.* 1 \/ 3\|/)
 })
 
 test('phase words match whole words only', async ($, on) => {
@@ -376,7 +375,7 @@ test('a PowerShell commit counts', async ($, on) => {
 test('auto mode shows an auto on badge; attended says auto off', async ($, on) => {
   mock.clock(on, { now: 0 })
   await $.tool.call(status({ action: 'run_start', project: 'Cell', text: 'm1', total: 2, auto: true }))
-  expect(await band($)).toMatch(/^\[Cell\] \|m1\| {3}\| auto on \| {3}run /)
+  expect(await band($)).toMatch(/^Cell {2}\|m1\| {3}\| auto on \| {3}0 \/ 2\|/)
   await $.tool.call(status({ action: 'run_start', project: 'Cell', text: 'm1', total: 2 }))
   expect(await band($)).toMatch(/\|auto off\|/)
 })
