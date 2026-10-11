@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Review a non-diff subject (skill, plugin, file, plan, design, doc) and flag issues to correct and improvements to make. Use for /devkit:audit, or when the user says "audit <subject>" or "review <subject>" (not a code diff). For reviewing a code diff or PR, use code-review instead.
+description: Review a subject (skill, plugin, file, plan, design, doc) and flag issues to correct and improvements to make. Use for /devkit:audit, or when the user says "audit <subject>" or "review <subject>" (not a code diff). For reviewing a code diff or PR, use code-review instead.
 argument-hint: <subject>
 ---
 
@@ -23,4 +23,4 @@ Subject: $ARGUMENTS
    - Clarity, structure, naming.
 5. **Don't flag:** Style chosen on purpose. Nitpicks with no real effect.
 6. **Report:** Prioritized list: Critical, Should fix, Nice to have. Each item: location, problem in 1–2 sentences, concrete fix. Under ~600 words.
-7. **No edits:** Never change subject during review. Present report to user. Ask which fixes to apply. Running as subagent: return report to main agent, which asks user.
+7. **No edits:** Never change subject during review. Present report to user. Ask which fixes to apply. Running as subagent: return report to main agent, which asks user. Called unattended (e.g. by autopilot): never ask; return report only.

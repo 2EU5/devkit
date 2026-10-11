@@ -1,5 +1,6 @@
 import type { AgentSpawnInput, RenderPropsOf } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import { isSubagentBanned } from '../hooks/autopilot'
 import type { TestBody } from 'claude-code/testing'
 
 const status = (input: Record<string, unknown>) => ({ tool: 'mcp__devkit__status' as const, ...input })
@@ -267,4 +268,74 @@ test('a short slot drops the rules, then the footer', async ($, on) => {
   const shorter = await band($, 100, 6)
   expect(shorter).not.toMatch(/agents/)
   expect(shorter).toMatch(/picking next issue/)
+})
+
+test('a failed main turn ends the run; an answer (waiting on agents) does not', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  on('ui.render', ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
+  on('ui.toast', () => ({ value: undefined }))
+  on('turn.complete', () => ({ text: '' }))
+  await $.tool.call(status({ action: 'run_start', text: 'm1' }))
+  await $.turn.complete({ agentId: 'a1', reason: 'answer', text: '' } as never)
+  expect(await band($)).toMatch(/AUTOPILOT/)
+  await $.turn.complete({ reason: 'answer', text: '' } as never)
+  expect(await band($)).toMatch(/AUTOPILOT/)
+  await $.turn.complete({ reason: 'error', text: '' } as never)
+  expect(await band($)).not.toMatch(/AUTOPILOT/)
+  await $.tool.call(status({ action: 'run_start', text: 'm1' }))
+  await $.turn.complete({ reason: 'refusal', text: '' } as never)
+  expect(await band($)).not.toMatch(/AUTOPILOT/)
+})
+
+test('issue_start in a new milestone moves the scope', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  await $.tool.call(status({ action: 'run_start', text: 'M1 · Core', total: 3 }))
+  await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
+  expect(await band($)).toMatch(/\|M1 \|Core\|/)
+  await $.tool.call(status({ action: 'issue_done', text: 'done note' }))
+  expect(await band($)).toMatch(/\|M1 \|Core\|/)
+  await $.tool.call(status({ action: 'issue_start', issue: 'G-2', title: 'B', size: 'S', text: 'M2 · Polish' }))
+  expect(await band($)).toMatch(/\|M2 \|Polish\|.* 1\/3\|/)
+})
+
+test('phase words match whole words only', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  await $.tool.call(status({ action: 'run_start' }))
+  await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
+  await $.tool.call(status({ action: 'step', text: 'planet shader research' }))
+  expect(await band($)).toMatch(/\|○ plan\| ── \|○ build\|/)
+  await $.tool.call(status({ action: 'step', text: 'plan: shader' }))
+  expect(await band($)).toMatch(/\|● plan\|/)
+})
+
+test('subagents get no git or Unity tools during a run', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  on('tool.call', () => ({ result: 'ok', text: 'ok', isError: false }) as never)
+  const git = { tool: 'Bash', command: 'cd x && git status' } as never
+  const unity = { tool: 'mcp__unity__run_command' } as never
+  expect(await $.tool.call({ ...(git as object), agentId: 'a1' } as never)).not.toHaveProperty('deny')
+  await $.tool.call(status({ action: 'run_start' }))
+  expect(await $.tool.call({ ...(git as object), agentId: 'a1' } as never)).toHaveProperty('deny')
+  expect(await $.tool.call({ ...(unity as object), agentId: 'a1' } as never)).toHaveProperty('deny')
+  expect(await $.tool.call({ tool: 'Bash', command: 'dotnet build legit.csproj', agentId: 'a1' } as never)).not.toHaveProperty('deny')
+  expect(await $.tool.call(git)).not.toHaveProperty('deny')
+  expect(await $.tool.call({ tool: 'PowerShell', command: 'git push', agentId: 'a1' } as never)).toHaveProperty('deny')
+  expect(await $.tool.call({ tool: 'mcp__community__x', agentId: 'a1' } as never)).not.toHaveProperty('deny')
+})
+
+test('git and unity CLI ban matches leading space, newlines and env prefixes, not lookalikes', () => {
+  for (const c of ['  git status', 'echo a\ngit log', 'FOO=1 git commit', 'x | git diff', '& git push', 'unity status', 'cd p; unity command x'])
+    expect(isSubagentBanned('Bash', c)).toBe(true)
+  for (const c of ['legit status', 'echo git', 'cat .gitignore', 'dotnet build', 'ls Assets/unity', 'cat UnityProject.sln'])
+    expect(isSubagentBanned('Bash', c)).toBe(false)
+  expect(isSubagentBanned('unity_cli')).toBe(true)
+})
+
+test('a PowerShell commit counts', async ($, on) => {
+  mock.clock(on, { now: 0 })
+  on('tool.call', () => ({ result: 'ok', text: 'ok', isError: false }) as never)
+  await $.tool.call(status({ action: 'run_start' }))
+  await $.tool.call(status({ action: 'issue_start', issue: 'G-1', title: 'A', size: 'S' }))
+  await $.tool.call({ tool: 'PowerShell', command: 'git commit -m "G-1: x"' } as never)
+  expect(await band($)).toMatch(/commits 1/)
 })

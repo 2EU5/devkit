@@ -37,9 +37,16 @@ type StatusInput = {
   project?: string
 }
 
-// decide and audit may run their own subagents beyond the cap (skill rule 12).
+// decide, audit and code-review (reported as audit) may run their own subagents beyond the cap (skill rule 12).
 export const isCapExempt = (s: string) => /^(decide|audit)/i.test(s)
 export const isCommit = (command: string) => COMMIT.test(command)
+// Rule 12: subagents run no git and no Unity tools (MCP or the `unity` CLI) during a run. A command
+// counts at the start of any command in the line, after optional VAR=value prefixes; `command` is
+// set for shell tools only. shortcut: a search pattern ending in `|git ` is refused too; rare, costs one call.
+export const isSubagentBanned = (tool: string, command = '') =>
+  /(?:^|_)unity/i.test(tool) || /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:git|unity)\b/.test(command)
+// A step starts with a phase word as a whole word: "plan" yes, "planet" no.
+const startsWord = (text: string, word: string) => text === word || new RegExp(`^${word}\\b`).test(text)
 
 export const fmtTokens = (n: number) =>
   n < 1000 ? `${n}` : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1)}M`
@@ -76,15 +83,15 @@ export const bar = (ratio: number, width: number) => {
 // A phase left behind by going back is `seen`.
 export const phases = (list: StepEntry[], kind?: string) => {
   const texts = list.map(one => one.text.trim().toLowerCase())
-  const firstWork = texts.map(text => WORK_WORDS.find(word => text.startsWith(word))).find(Boolean)
+  const firstWork = texts.map(text => WORK_WORDS.find(word => startsWord(text, word))).find(Boolean)
   const label = kind || firstWork || DEFAULT_KIND
   const work = [label, ...WORK_WORDS]
   const seen = new Set<number>()
   let current = -1
   for (const text of texts) {
     // plan, verify and commit win over the work words, whatever the kind is.
-    const named = ['plan', '', 'verify', 'commit'].findIndex(word => word && text.startsWith(word))
-    const hit = named >= 0 ? named : work.some(word => text.startsWith(word)) ? 1 : -1
+    const named = ['plan', '', 'verify', 'commit'].findIndex(word => word && startsWord(text, word))
+    const hit = named >= 0 ? named : work.some(word => startsWord(text, word)) ? 1 : -1
     if (hit >= 0) {
       current = hit
       seen.add(hit)
@@ -127,9 +134,9 @@ export const register: Register = on => {
           text: {
             type: 'string',
             description:
-              'run_start: scope (milestone, e.g. "M2.5 · Organic world"). step: short text starting with the phase word (plan, the issue kind, verify, commit). done/abort: one-line reason',
+              'run_start, issue_start: scope (milestone, e.g. "M2.5 · Organic world"); issue_start only when the milestone changes. step: short text starting with the phase word (plan, the issue kind, verify, commit). done/abort: one-line reason',
           },
-          total: { type: 'number', description: 'run_start: issues in scope' },
+          total: { type: 'number', description: 'any action: issues in scope (updated as sub-issues are added)' },
           project: { type: 'string', description: 'run_start: Linear project name' },
         },
         required: ['action'],
@@ -154,9 +161,10 @@ export const register: Register = on => {
     await update($, now, () => at)
     const current = await read($, issue)
     const id = input.issue ?? current?.id ?? '?'
-    // Any action may carry an updated total (sub-issues added mid-run).
+    // Any action may carry an updated total (sub-issues added mid-run); issue_start a new milestone.
     if (input.action !== 'run_start') {
-      await update($, run, r => (r ? { ...r, lastAt: at, total: input.total ?? r.total } : r))
+      const scope = input.action === 'issue_start' ? input.text : undefined
+      await update($, run, r => (r ? { ...r, lastAt: at, total: input.total ?? r.total, scope: scope || r.scope } : r))
     }
 
     switch (input.action) {
@@ -198,8 +206,12 @@ export const register: Register = on => {
     return { result: 'ok', text: 'ok' }
   })
 
-  // Work stats for the current issue: tool calls, files touched, commits.
+  // Rule 12 guard for subagents, then work stats for the current issue: tool calls, files, commits.
   on('tool.call', async ($, e, next) => {
+    const command = e.tool === 'Bash' || e.tool === 'PowerShell' ? e.command : ''
+    if (e.agentId && isSubagentBanned(e.tool, command) && (await read($, isRunning))) {
+      return { deny: 'autopilot: subagents run no git and no Unity tools (rule 12). Leave it to the main agent.' }
+    }
     const ran = await next(e)
     if (e.tool !== TOOL && !ran.deny && (await read($, issue))) {
       await update($, work, w => ({ ...w, tools: w.tools + 1 }))
@@ -215,13 +227,15 @@ export const register: Register = on => {
       return ran
     })
   }
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const ran = await next(e)
-    if (!ran.deny && !ran.isError && isCommit(e.command) && (await read($, issue))) {
-      await update($, work, w => ({ ...w, commits: w.commits + 1 }))
-    }
-    return ran
-  })
+  for (const tool of ['Bash', 'PowerShell'] as const) {
+    on('tool.call', { tool }, async ($, e, next) => {
+      const ran = await next(e)
+      if (!ran.deny && !ran.isError && isCommit(e.command) && (await read($, issue))) {
+        await update($, work, w => ({ ...w, commits: w.commits + 1 }))
+      }
+      return ran
+    })
+  }
 
   // Run token total: every model request, main loop and subagents. Cache reads are left out:
   // each step re-reads the whole context, which would swamp the figure.
@@ -262,9 +276,9 @@ export const register: Register = on => {
     if (e.agentId) {
       const status: AgentRow['status'] = e.reason === 'answer' ? 'done' : 'failed'
       await update($, agents, list => list.map(one => (one.id === e.agentId ? { ...one, status } : one)))
-    } else if (e.reason === 'aborted' && (await read($, isRunning))) {
-      // The person stopped the main loop: the run will not reach run_end.
-      await endRun($, 'stopped')
+    } else if (e.reason !== 'answer' && (await read($, isRunning))) {
+      // Stopped or failed: run_end will not come. An answer may only be a wait for background agents.
+      await endRun($, e.reason === 'aborted' ? 'stopped' : 'failed')
     }
 
     return next(e)

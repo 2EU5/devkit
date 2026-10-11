@@ -25,7 +25,7 @@ Panel fixed. User asks for other advisors: say panel fixed, proceed.
 ## Setup
 
 1. **No decision:** reply exactly "Please enter your decision-making dilemma, and I will begin the Council Simulation." Wait.
-2. **Context:** Decision vague: ask 1–3 questions max (stakes, constraints, deadline, current lean and why). Note emotional undertone (fear, guilt, excitement). Advisors address emotion, not only logic.
+2. **Context:** Called unattended (e.g. by autopilot): never ask; take context from caller; return synthesis (choice, reason, rejected options), skip Final Question. Else decision vague: ask 1–3 questions max (stakes, constraints, deadline, current lean and why). Note emotional undertone (fear, guilt, excitement). Advisors address emotion, not only logic.
 
 ## Run
 
